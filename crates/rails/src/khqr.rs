@@ -1,13 +1,14 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use async_trait::async_trait;
 use dual_rail_core::{Currency, Money};
-use khqr_api::{BakongClient, TxStatus};
-use khqr_core::Khqr;
+use khqr_api::{ApiError, BakongClient, Transaction, TxStatus};
+use khqr_core::{Khqr, KhqrError};
 use thiserror::Error;
 use uuid::Uuid;
 
 const BAKONG_BATCH_LIMIT: usize = 50;
 const BILL_NUMBER_LEN: usize = 25;
-const MAX_AMOUNT_TEXT_LEN: usize = 13;
 
 #[derive(Debug, Clone)]
 pub struct MerchantAccount {
@@ -32,12 +33,6 @@ pub enum IssueError {
     TooLarge(String),
     #[error("could not build KHQR: {0}")]
     Build(String),
-    #[error("KHQR encodes {encoded:?} {currency} but the payment is {expected}")]
-    AmountDrift {
-        expected: String,
-        encoded: Option<String>,
-        currency: String,
-    },
 }
 
 pub struct KhqrIssuer {
@@ -60,7 +55,7 @@ impl KhqrIssuer {
         created_at_ms: u64,
         expires_at_ms: u64,
     ) -> Result<IssuedQr, IssueError> {
-        let (expected, value, currency) = khqr_amount(amount)?;
+        let (khqr_units, currency) = khqr_amount(amount)?;
         let account = &self.account;
         let builder = match (&account.merchant_id, &account.acquiring_bank) {
             (Some(merchant_id), Some(bank)) => Khqr::merchant(&account.account_id)
@@ -73,27 +68,18 @@ impl KhqrIssuer {
             .merchant_name(&account.merchant_name)
             .merchant_city(&account.merchant_city)
             .currency(currency)
-            .amount(value)
+            .amount_minor(khqr_units)
             .bill_number(bill_number(payment_id))
             .created_at_ms(created_at_ms)
             .expires_at_ms(expires_at_ms)
             .build()
             .and_then(|khqr| khqr.to_qr_string())
-            .map_err(|err| IssueError::Build(err.to_string()))?;
-
-        // khqr-core formats a float and rounds; refuse any QR that would charge a
-        // different amount than the one we record.
-        let decoded =
-            khqr_core::decode(&payload).map_err(|err| IssueError::Build(err.to_string()))?;
-        if decoded.transaction_amount.as_deref() != Some(expected.as_str())
-            || decoded.transaction_currency != currency.code()
-        {
-            return Err(IssueError::AmountDrift {
-                expected,
-                encoded: decoded.transaction_amount,
-                currency: decoded.transaction_currency,
-            });
-        }
+            .map_err(|err| match err {
+                KhqrError::FieldTooLong {
+                    field: "amount", ..
+                } => IssueError::TooLarge(amount.amount_minor().to_string()),
+                other => IssueError::Build(other.to_string()),
+            })?;
 
         Ok(IssuedQr {
             md5: khqr_core::md5(&payload),
@@ -115,24 +101,14 @@ fn bill_number(payment_id: Uuid) -> String {
     String::from_utf8(out.to_vec()).expect("base36 digits are ascii")
 }
 
-fn khqr_amount(amount: Money) -> Result<(String, f64, khqr_core::Currency), IssueError> {
-    let minor = amount.amount_minor();
-    let converted = match amount.currency() {
-        Currency::Usd => Ok((
-            format!("{}.{:02}", minor / 100, minor % 100),
-            minor as f64 / 100.0,
-            khqr_core::Currency::Usd,
-        )),
-        Currency::Khr if minor % 100 != 0 => Err(IssueError::FractionalRiel(minor)),
-        Currency::Khr => {
-            let riel = minor / 100;
-            Ok((riel.to_string(), riel as f64, khqr_core::Currency::Khr))
-        }
-    }?;
-    if converted.0.len() > MAX_AMOUNT_TEXT_LEN {
-        return Err(IssueError::TooLarge(converted.0));
+/// Our ISO minor units in the units KHQR writes: cents for dollars, whole riel.
+fn khqr_amount(amount: Money) -> Result<(u64, khqr_core::Currency), IssueError> {
+    let minor = u64::try_from(amount.amount_minor()).expect("Money is always positive");
+    match amount.currency() {
+        Currency::Usd => Ok((minor, khqr_core::Currency::Usd)),
+        Currency::Khr if minor % 100 != 0 => Err(IssueError::FractionalRiel(amount.amount_minor())),
+        Currency::Khr => Ok((minor / 100, khqr_core::Currency::Khr)),
     }
-    Ok(converted)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -165,11 +141,15 @@ pub trait KhqrVerifier: Send + Sync {
 /// built with `BakongClient::with_base_url`.
 pub struct BakongVerifier {
     client: BakongClient,
+    batch_refused: AtomicBool,
 }
 
 impl BakongVerifier {
     pub fn new(client: BakongClient) -> Self {
-        Self { client }
+        Self {
+            client,
+            batch_refused: AtomicBool::new(false),
+        }
     }
 }
 
@@ -178,39 +158,65 @@ impl KhqrVerifier for BakongVerifier {
     async fn check(&self, md5s: &[String]) -> Result<Vec<KhqrStatus>, VerifierError> {
         let mut statuses = Vec::with_capacity(md5s.len());
         for chunk in md5s.chunks(BAKONG_BATCH_LIMIT) {
-            let answers = self
-                .client
-                .check_transaction_by_md5_list(chunk)
-                .await
-                .map_err(|err| VerifierError(err.to_string()))?;
-            statuses.extend(answers.into_iter().map(to_status));
+            if !self.batch_refused.load(Ordering::Relaxed) {
+                match self.client.check_transaction_by_md5_list(chunk).await {
+                    Ok(answers) => {
+                        statuses.extend(answers.into_iter().map(to_status));
+                        continue;
+                    }
+                    // Production Bakong answers the md5 batch endpoint with a bare 403
+                    // while single lookups work, so fall back to those for good.
+                    Err(ApiError::Http { status: 403 }) => {
+                        self.batch_refused.store(true, Ordering::Relaxed);
+                    }
+                    Err(err) => return Err(VerifierError(err.to_string())),
+                }
+            }
+            for md5 in chunk {
+                match self.client.check_transaction_by_md5(md5).await {
+                    Err(
+                        err @ (ApiError::Transport(_)
+                        | ApiError::Http { .. }
+                        | ApiError::Unauthorized { .. }),
+                    ) => {
+                        return Err(VerifierError(err.to_string()));
+                    }
+                    answer => statuses.push(to_status(answer)),
+                }
+            }
         }
         Ok(statuses)
     }
 }
 
-fn to_status(status: TxStatus) -> KhqrStatus {
-    match status {
-        TxStatus::NotFound => KhqrStatus::Unpaid,
-        TxStatus::StaticQr => {
+fn to_status(answer: Result<TxStatus, ApiError>) -> KhqrStatus {
+    match answer {
+        Ok(TxStatus::NotFound) => KhqrStatus::Unpaid,
+        Ok(TxStatus::StaticQr) => {
             KhqrStatus::Unreadable("bakong treated a dynamic QR as static".to_owned())
         }
-        TxStatus::Paid(transaction) => KhqrStatus::Paid(KhqrTransfer {
-            hash: transaction.hash,
-            amount_minor: transaction.amount.and_then(to_minor),
-            currency: transaction.currency,
-            to_account_id: transaction.to_account_id,
+        Ok(TxStatus::Paid(transaction)) => KhqrStatus::Paid(KhqrTransfer {
+            amount_minor: iso_minor(&transaction),
             // When the payer sent it; acknowledgement can lag past the expiry.
             paid_at_ms: transaction
                 .created_date_ms
                 .or(transaction.acknowledged_date_ms),
+            hash: transaction.hash,
+            currency: transaction.currency,
+            to_account_id: transaction.to_account_id,
         }),
+        Err(err) => KhqrStatus::Unreadable(err.to_string()),
     }
 }
 
-fn to_minor(amount: f64) -> Option<i64> {
-    let minor = (amount * 100.0).round();
-    (minor.is_finite() && (1.0..1e15).contains(&minor)).then_some(minor as i64)
+/// Bakong's amount in our ISO minor units, where riel also has two decimals.
+fn iso_minor(transaction: &Transaction) -> Option<i64> {
+    let khqr_units = i64::try_from(transaction.amount_minor()?).ok()?;
+    if transaction.currency.as_deref()?.eq_ignore_ascii_case("KHR") {
+        khqr_units.checked_mul(100)
+    } else {
+        Some(khqr_units)
+    }
 }
 
 #[cfg(test)]
@@ -277,7 +283,7 @@ mod tests {
     fn refuses_amounts_too_long_for_the_qr() {
         assert_eq!(
             issue(100_000_000_000_000, Currency::Usd),
-            Err(IssueError::TooLarge("1000000000000.00".to_owned()))
+            Err(IssueError::TooLarge("100000000000000".to_owned()))
         );
     }
 
@@ -310,12 +316,24 @@ mod tests {
         assert_eq!(decoded.expires_at_ms, Some(EXPIRES));
     }
 
+    fn transaction(amount: Option<f64>, currency: Option<&str>) -> Transaction {
+        serde_json::from_value(serde_json::json!({
+            "hash": "h",
+            "amount": amount,
+            "currency": currency,
+        }))
+        .unwrap()
+    }
+
     #[test]
-    fn converts_bakong_amounts_to_minor_units() {
-        assert_eq!(to_minor(10.1), Some(1010));
-        assert_eq!(to_minor(0.29), Some(29));
-        assert_eq!(to_minor(5000.0), Some(500_000));
-        assert_eq!(to_minor(0.0), None);
-        assert_eq!(to_minor(f64::NAN), None);
+    fn converts_bakong_amounts_to_iso_minor_units() {
+        assert_eq!(iso_minor(&transaction(Some(10.1), Some("USD"))), Some(1010));
+        assert_eq!(iso_minor(&transaction(Some(0.29), Some("USD"))), Some(29));
+        assert_eq!(
+            iso_minor(&transaction(Some(5000.0), Some("KHR"))),
+            Some(500_000)
+        );
+        assert_eq!(iso_minor(&transaction(Some(500.7), Some("KHR"))), None);
+        assert_eq!(iso_minor(&transaction(Some(10.0), None)), None);
     }
 }
