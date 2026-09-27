@@ -1,5 +1,8 @@
 # dual-rail
 
+[![CI](https://github.com/tangheng05/dual-rail/actions/workflows/ci.yml/badge.svg)](https://github.com/tangheng05/dual-rail/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A Rust payment service that takes **international cards through Stripe** and **Cambodian bank-app payments through Bakong KHQR** behind one API, one status model and one double-entry ledger, checked every day by a reconciliation job.
 
 Cambodian merchants selling to both tourists and locals need both rails. KHQR libraries exist, and so do multi-processor orchestrators, but nothing puts card and KHQR payments under one ledger with the guarantees that make payments hard: idempotent creates, reliable webhooks, a ledger that always balances, and a daily reconciliation. That's what this project does, for two rails.
@@ -71,6 +74,12 @@ stripe listen --forward-to localhost:8080/webhooks/stripe
 
 `stripe listen` prints a `whsec_...` secret. Put it in `.env` as `STRIPE_WEBHOOK_SECRET` and restart the app. Then open <http://localhost:8080>, choose Card, and pay with `4242 4242 4242 4242`.
 
+Released images are also on the GitHub container registry, so you can skip the build:
+
+```sh
+docker pull ghcr.io/tangheng05/dual-rail:0.1.0
+```
+
 KHQR needs a Bakong Open API token (`BAKONG_TOKEN`, sandbox by default) and a server in Cambodia or a relay. Without them the demo still issues a scannable QR, and the poller logs Bakong's refusal and keeps the payment `pending`.
 
 ## Configuration
@@ -139,6 +148,10 @@ Integration tests run against a real Postgres (`sqlx::test` creates a database p
 - **KHQR paid twice:** a dynamic KHQR can be paid more than once, and Bakong's md5 lookup doesn't expose the second transfer. Catching it needs the merchant's bank statement, so each reconciliation run records `double_payment_check: "not_available"`.
 - **Bakong rate limits:** the free Open API's limits aren't clearly documented. Confirm them with NBC before relying on polling in production.
 - **Not in v1:** refunds, partial captures, FX, merchant dashboard, multi-tenancy, authentication on the API, and routing across processors.
+
+## Security
+
+Please report vulnerabilities privately; see [SECURITY.md](SECURITY.md).
 
 ## License
 
