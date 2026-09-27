@@ -1,5 +1,5 @@
 use axum::Json;
-use axum::http::StatusCode;
+use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use dual_rail_core::{MoneyError, ParseCodeError};
 use serde_json::json;
@@ -12,6 +12,7 @@ pub enum ApiError {
     Conflict(String),
     BadGateway,
     PayloadTooLarge,
+    Unauthorized,
     Internal,
 }
 
@@ -36,6 +37,14 @@ impl From<MoneyError> for ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
+        if matches!(self, Self::Unauthorized) {
+            return (
+                StatusCode::UNAUTHORIZED,
+                [(header::WWW_AUTHENTICATE, "Bearer")],
+                Json(json!({ "error": "a valid API key or client token is required" })),
+            )
+                .into_response();
+        }
         let (status, message) = match self {
             Self::BadRequest(message) => (StatusCode::BAD_REQUEST, message),
             Self::Unprocessable(message) => (StatusCode::UNPROCESSABLE_ENTITY, message),
@@ -49,6 +58,7 @@ impl IntoResponse for ApiError {
                 StatusCode::BAD_GATEWAY,
                 "payment provider is unavailable, try again".to_owned(),
             ),
+            Self::Unauthorized => unreachable!("answered above with its challenge header"),
             Self::Internal => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "internal error".to_owned(),

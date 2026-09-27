@@ -27,6 +27,23 @@ pub enum Command {
     /// Work the review queue; needs only DATABASE_URL
     #[command(subcommand)]
     Flags(FlagsCommand),
+    /// Manage the API keys merchants use to create payments; needs only DATABASE_URL
+    #[command(subcommand)]
+    Keys(KeysCommand),
+}
+
+#[derive(Debug, PartialEq, Eq, Subcommand)]
+pub enum KeysCommand {
+    /// Create a key and print it; it is shown only this once
+    Create {
+        /// What the key is for, e.g. "shop backend"
+        #[arg(long, value_parser = non_empty)]
+        name: String,
+    },
+    /// Print every key as JSON, without the secrets
+    List,
+    /// Stop a key from working, immediately and for good
+    Revoke { id: Uuid },
 }
 
 #[derive(Debug, PartialEq, Eq, Subcommand)]
@@ -54,7 +71,7 @@ fn parse_date(value: &str) -> Result<Date, String> {
 fn non_empty(value: &str) -> Result<String, String> {
     let value = value.trim();
     if value.is_empty() {
-        return Err("the note can't be empty".to_owned());
+        return Err("this can't be empty".to_owned());
     }
     Ok(value.to_owned())
 }
@@ -107,6 +124,29 @@ mod tests {
                 note: "refunded by hand".to_owned(),
             }))
         );
+    }
+
+    #[test]
+    fn parses_key_commands() {
+        assert_eq!(
+            parse(&["dual-rail-api", "keys", "create", "--name", "shop backend"]).unwrap(),
+            Some(Command::Keys(KeysCommand::Create {
+                name: "shop backend".to_owned()
+            }))
+        );
+        assert_eq!(
+            parse(&[
+                "dual-rail-api",
+                "keys",
+                "revoke",
+                "00000000-0000-0000-0000-000000000002"
+            ])
+            .unwrap(),
+            Some(Command::Keys(KeysCommand::Revoke {
+                id: Uuid::from_u128(2)
+            }))
+        );
+        assert!(parse(&["dual-rail-api", "keys", "create"]).is_err());
     }
 
     #[test]

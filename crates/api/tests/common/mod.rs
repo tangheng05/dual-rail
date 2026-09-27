@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{HeaderMap, Request, StatusCode};
-use dual_rail_api::{AppState, HttpSettings};
+use dual_rail_api::{AppState, HttpSettings, hash_api_key};
 use dual_rail_rails::card::{
     CardGateway, CardGatewayError, CreatedPaymentIntent, IntentSnapshot, PaymentIntentRequest,
 };
@@ -23,6 +23,8 @@ use tower::ServiceExt;
 
 pub const WEBHOOK_SECRET: &str = "whsec_test";
 pub const KHQR_ACCOUNT: &str = "dual_rail@devb";
+pub const API_KEY: &str = "drk_0000000000000000000000000000000000000000000000000000000000000001";
+pub const CLIENT_TOKEN_SECRET: &[u8] = b"a-test-client-token-secret-32-bytes!";
 
 #[derive(Default)]
 pub struct FakeCards {
@@ -162,15 +164,27 @@ pub struct TestApp {
 }
 
 impl TestApp {
-    pub fn new(pool: PgPool) -> Self {
-        Self::with_cards(pool, FakeCards::default())
+    pub async fn new(pool: PgPool) -> Self {
+        Self::with_cards(pool, FakeCards::default()).await
     }
 
-    pub fn with_cards(pool: PgPool, cards: FakeCards) -> Self {
-        Self::configured(pool, cards, HttpSettings::default())
+    pub async fn with_cards(pool: PgPool, cards: FakeCards) -> Self {
+        Self::configured(pool, cards, HttpSettings::default(), false).await
     }
 
-    pub fn configured(pool: PgPool, cards: FakeCards, http: HttpSettings) -> Self {
+    pub async fn demo(pool: PgPool) -> Self {
+        Self::configured(pool, FakeCards::default(), HttpSettings::default(), true).await
+    }
+
+    pub async fn configured(
+        pool: PgPool,
+        cards: FakeCards,
+        http: HttpSettings,
+        demo_mode: bool,
+    ) -> Self {
+        dual_rail_store::api_keys::insert(&pool, "tests", &API_KEY[..12], &hash_api_key(API_KEY))
+            .await
+            .unwrap();
         let cards = Arc::new(cards);
         let bakong = Arc::new(FakeBakong::default());
         let state = AppState {
@@ -189,6 +203,8 @@ impl TestApp {
             verifier: bakong.clone(),
             khqr_ttl: Duration::from_secs(300),
             http,
+            client_token_secret: CLIENT_TOKEN_SECRET.into(),
+            demo_mode,
         };
         Self {
             router: dual_rail_api::app(state.clone()),
@@ -355,8 +371,18 @@ impl TestApp {
     }
 }
 
+/// A GET the merchant makes with its API key.
+pub fn api_get(path: impl AsRef<str>) -> Request<Body> {
+    Request::get(path.as_ref())
+        .header("authorization", format!("Bearer {API_KEY}"))
+        .body(Body::empty())
+        .unwrap()
+}
+
 pub fn create_payment_request(key: Option<&str>, body: Value) -> Request<Body> {
-    let mut request = Request::post("/payments").header("content-type", "application/json");
+    let mut request = Request::post("/payments")
+        .header("content-type", "application/json")
+        .header("authorization", format!("Bearer {API_KEY}"));
     if let Some(key) = key {
         request = request.header("idempotency-key", key);
     }

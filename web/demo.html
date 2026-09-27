@@ -184,6 +184,8 @@
   };
 
   let attempt = null;
+  let clientToken = null;
+  let qrUrl = null;
   let pollTimer = null;
   let countdownTimer = null;
   let stripe = null;
@@ -227,6 +229,9 @@
     $("status").textContent = LABELS[state] || state;
   }
 
+  // The client token lets this page read the one payment it created, nothing else.
+  const tokenHeaders = () => ({ "x-client-token": clientToken });
+
   async function api(path, options = {}) {
     const response = await fetch(path, options);
     const body = await response.json().catch(() => ({}));
@@ -261,7 +266,7 @@
 
     $("submit").disabled = true;
     try {
-      const payment = await api("/payments", {
+      const payment = await api("/demo/payments", {
         method: "POST",
         headers: { "content-type": "application/json", "idempotency-key": attempt.key },
         body,
@@ -275,6 +280,7 @@
   });
 
   function showPayment(payment) {
+    clientToken = payment.client_token;
     $("checkout").classList.add("hidden");
     $("payment").classList.remove("hidden");
     $("payment-amount").textContent = formatAmount(payment.amount_minor, payment.currency);
@@ -283,12 +289,24 @@
 
     if (payment.method === "khqr") {
       $("khqr-view").classList.remove("hidden");
-      $("qr").src = `/payments/${encodeURIComponent(payment.id)}/qr.svg`;
+      loadQr(payment.id);
       startCountdown(new Date(payment.expires_at));
     } else if (payment.status === "pending" && payment.client_secret) {
       mountCard(payment.client_secret);
     }
     if (!TERMINAL.has(payment.status)) poll(payment.id);
+  }
+
+  // An <img> can't send the token header, so fetch the image and show it from a blob.
+  async function loadQr(id) {
+    try {
+      const response = await fetch(`/payments/${encodeURIComponent(id)}/qr.svg`, { headers: tokenHeaders() });
+      if (!response.ok) throw new Error(`Could not load the QR (${response.status})`);
+      qrUrl = URL.createObjectURL(await response.blob());
+      $("qr").src = qrUrl;
+    } catch (error) {
+      showError("payment-error", error.message);
+    }
   }
 
   function startCountdown(expiresAt) {
@@ -305,7 +323,7 @@
   function poll(id) {
     pollTimer = setInterval(async () => {
       try {
-        const payment = await api(`/payments/${encodeURIComponent(id)}`);
+        const payment = await api(`/payments/${encodeURIComponent(id)}`, { headers: tokenHeaders() });
         setStatus(payment.status);
         if (TERMINAL.has(payment.status)) {
           stopTimers();
@@ -371,6 +389,9 @@
     stopTimers();
     attempt = null;
     elements = null;
+    clientToken = null;
+    if (qrUrl) URL.revokeObjectURL(qrUrl);
+    qrUrl = null;
     $("card-element").replaceChildren();
     $("qr").removeAttribute("src");
     $("khqr-view").classList.add("hidden");

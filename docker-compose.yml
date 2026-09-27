@@ -23,6 +23,8 @@ services:
     environment:
       DATABASE_URL: postgres://dual_rail:dual_rail@postgres:5432/dual_rail
       RUST_LOG: info
+      # Local only: serves the demo page and its keyless create endpoint.
+      DEMO_MODE: "true"
     ports:
       - "8080:8080"
     depends_on:

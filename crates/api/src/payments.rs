@@ -12,8 +12,8 @@ use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-use crate::AppState;
 use crate::error::ApiError;
+use crate::{AppState, auth};
 
 const MAX_IDEMPOTENCY_KEY_LEN: usize = 255;
 const MAX_DESCRIPTION_LEN: usize = 1000;
@@ -40,6 +40,8 @@ pub struct PaymentResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     client_secret: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    client_token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     qr: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     md5: Option<String>,
@@ -61,6 +63,7 @@ impl From<Payment> for PaymentResponse {
             amount_minor: payment.amount.amount_minor(),
             currency: payment.amount.currency().as_str(),
             client_secret: None,
+            client_token: None,
             md5: payment.provider_ref.filter(|_| is_khqr),
             qr: payment.khqr_payload,
             expires_at: payment.expires_at,
@@ -68,12 +71,49 @@ impl From<Payment> for PaymentResponse {
     }
 }
 
+/// Idempotency keys are namespaced by who is calling, so an open demo caller
+/// reusing a merchant's key can never replay the merchant's payment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Scope {
+    Api,
+    Demo,
+}
+
+impl Scope {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Api => "api",
+            Self::Demo => "demo",
+        }
+    }
+}
+
+/// The merchant endpoint; its route requires an API key.
 pub async fn create(
     State(state): State<AppState>,
     headers: HeaderMap,
     payload: Result<Json<CreatePayment>, JsonRejection>,
 ) -> Result<Response, ApiError> {
-    let idempotency_key = idempotency_key(&headers)?;
+    create_in_scope(&state, Scope::Api, &headers, payload).await
+}
+
+/// Open to anyone while `DEMO_MODE` is on, so the demo page needs no key.
+pub async fn create_demo(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    payload: Result<Json<CreatePayment>, JsonRejection>,
+) -> Result<Response, ApiError> {
+    create_in_scope(&state, Scope::Demo, &headers, payload).await
+}
+
+async fn create_in_scope(
+    state: &AppState,
+    scope: Scope,
+    headers: &HeaderMap,
+    payload: Result<Json<CreatePayment>, JsonRejection>,
+) -> Result<Response, ApiError> {
+    let idempotency_key = format!("{}:{}", scope.as_str(), idempotency_key(headers)?);
+    let idempotency_key = idempotency_key.as_str();
     let Json(body) = payload.map_err(|rejection| {
         if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE {
             ApiError::PayloadTooLarge
@@ -93,9 +133,9 @@ pub async fn create(
     let request_hash = fingerprint(method, amount, description);
     match method {
         PaymentMethod::Card => {
-            create_card(&state, idempotency_key, &request_hash, amount, description).await
+            create_card(state, idempotency_key, &request_hash, amount, description).await
         }
-        PaymentMethod::Khqr => create_khqr(&state, idempotency_key, &request_hash, amount).await,
+        PaymentMethod::Khqr => create_khqr(state, idempotency_key, &request_hash, amount).await,
     }
 }
 
@@ -127,6 +167,7 @@ async fn create_card(
 
     let client_secret = link_card_intent(state, payment_id, amount, description).await?;
     Ok(created(
+        state,
         PaymentResponse {
             client_secret: Some(client_secret),
             ..pending_response(payment_id, method, provider, amount)
@@ -223,6 +264,7 @@ async fn create_khqr(
     tracing::info!(%payment_id, md5 = %qr.md5, "khqr payment created");
 
     Ok(created(
+        state,
         PaymentResponse {
             qr: Some(qr.payload),
             md5: Some(qr.md5),
@@ -284,6 +326,7 @@ async fn replay(
 
     tracing::info!(payment_id = %payment.id, "idempotent replay");
     Ok(created(
+        state,
         PaymentResponse {
             client_secret,
             ..payment.into()
@@ -295,7 +338,9 @@ async fn replay(
 pub async fn get(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
+    headers: HeaderMap,
 ) -> Result<Json<PaymentResponse>, ApiError> {
+    auth::authorize_read(&state, &headers, id).await?;
     let payment = payments::find(&state.pool, id)
         .await?
         .ok_or(ApiError::NotFound)?;
@@ -305,7 +350,9 @@ pub async fn get(
 pub async fn qr_svg(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
+    headers: HeaderMap,
 ) -> Result<Response, ApiError> {
+    auth::authorize_read(&state, &headers, id).await?;
     let payload = payments::find(&state.pool, id)
         .await?
         .and_then(|payment| payment.khqr_payload)
@@ -338,6 +385,7 @@ fn pending_response(
         amount_minor: amount.amount_minor(),
         currency: amount.currency().as_str(),
         client_secret: None,
+        client_token: None,
         qr: None,
         md5: None,
         expires_at: None,
@@ -350,7 +398,8 @@ fn still_in_progress() -> ApiError {
     )
 }
 
-fn created(body: PaymentResponse, replayed: bool) -> Response {
+fn created(state: &AppState, mut body: PaymentResponse, replayed: bool) -> Response {
+    body.client_token = Some(auth::client_token(&state.client_token_secret, body.id));
     let response = (StatusCode::CREATED, Json(body)).into_response();
     if replayed {
         with_replayed_header(response)

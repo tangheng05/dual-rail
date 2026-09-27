@@ -21,7 +21,7 @@ fn credited(amount: i64) -> Vec<(String, String, i64)> {
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn succeeded_event_settles_the_payment_and_writes_one_balanced_entry(pool: PgPool) {
-    let app = TestApp::new(pool);
+    let app = TestApp::new(pool).await;
     let id = new_payment(&app).await;
 
     let event = payment_intent_event("evt_1", "payment_intent.succeeded", &id, 1000);
@@ -33,7 +33,7 @@ async fn succeeded_event_settles_the_payment_and_writes_one_balanced_entry(pool:
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn replaying_the_same_event_five_times_credits_once(pool: PgPool) {
-    let app = TestApp::new(pool);
+    let app = TestApp::new(pool).await;
     let id = new_payment(&app).await;
     let event = payment_intent_event("evt_1", "payment_intent.succeeded", &id, 1000);
 
@@ -47,7 +47,7 @@ async fn replaying_the_same_event_five_times_credits_once(pool: PgPool) {
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn concurrent_deliveries_credit_once(pool: PgPool) {
-    let app = TestApp::new(pool);
+    let app = TestApp::new(pool).await;
     let id = new_payment(&app).await;
     let first = payment_intent_event("evt_1", "payment_intent.succeeded", &id, 1000);
     let second = payment_intent_event("evt_2", "payment_intent.succeeded", &id, 1000);
@@ -60,7 +60,7 @@ async fn concurrent_deliveries_credit_once(pool: PgPool) {
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn late_cancel_after_success_is_ignored(pool: PgPool) {
-    let app = TestApp::new(pool);
+    let app = TestApp::new(pool).await;
     let id = new_payment(&app).await;
 
     app.deliver(&payment_intent_event(
@@ -86,7 +86,7 @@ async fn late_cancel_after_success_is_ignored(pool: PgPool) {
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn failed_attempt_keeps_the_payment_open_for_a_retry(pool: PgPool) {
-    let app = TestApp::new(pool);
+    let app = TestApp::new(pool).await;
     let id = new_payment(&app).await;
 
     app.deliver(&payment_intent_event(
@@ -111,7 +111,7 @@ async fn failed_attempt_keeps_the_payment_open_for_a_retry(pool: PgPool) {
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn canceled_intent_fails_the_payment_without_ledger_entries(pool: PgPool) {
-    let app = TestApp::new(pool);
+    let app = TestApp::new(pool).await;
     let id = new_payment(&app).await;
 
     app.deliver(&payment_intent_event(
@@ -128,7 +128,7 @@ async fn canceled_intent_fails_the_payment_without_ledger_entries(pool: PgPool) 
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn bad_signature_is_rejected_and_changes_nothing(pool: PgPool) {
-    let app = TestApp::new(pool);
+    let app = TestApp::new(pool).await;
     let id = new_payment(&app).await;
     let payload = payment_intent_event("evt_1", "payment_intent.succeeded", &id, 1000).to_string();
 
@@ -147,7 +147,7 @@ async fn bad_signature_is_rejected_and_changes_nothing(pool: PgPool) {
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn amount_mismatch_is_not_credited(pool: PgPool) {
-    let app = TestApp::new(pool);
+    let app = TestApp::new(pool).await;
     let id = new_payment(&app).await;
 
     app.deliver(&payment_intent_event(
@@ -164,7 +164,7 @@ async fn amount_mismatch_is_not_credited(pool: PgPool) {
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn events_for_other_integrations_are_acknowledged_and_ignored(pool: PgPool) {
-    let app = TestApp::new(pool);
+    let app = TestApp::new(pool).await;
     let id = new_payment(&app).await;
 
     let foreign = json!({
@@ -181,7 +181,7 @@ async fn events_for_other_integrations_are_acknowledged_and_ignored(pool: PgPool
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn an_event_from_the_other_mode_never_settles_a_payment(pool: PgPool) {
-    let app = TestApp::new(pool);
+    let app = TestApp::new(pool).await;
     let id = new_payment(&app).await;
     let mut live_event = payment_intent_event("evt_1", "payment_intent.succeeded", &id, 1000);
     live_event["livemode"] = json!(true);

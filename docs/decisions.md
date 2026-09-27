@@ -149,3 +149,28 @@ before anything uses it.
 **Why.** The QR encodes milliseconds and Postgres stores microseconds. On a
 Linux clock with nanoseconds, the first response and a replay would otherwise
 report different expiry times.
+
+## 14. Two credentials: merchant keys and per-payment tokens
+
+**Decision.**
+- Creating a payment needs a merchant API key (`drk_` plus 256 random bits).
+  Only its SHA-256 hash is stored.
+- Reading one payment needs that key, or the payment's client token: an HMAC
+  of the payment id under `CLIENT_TOKEN_SECRET`.
+- Idempotency keys are namespaced by caller (`api` or `demo`).
+
+**Why.**
+- The customer's browser has to poll a payment and fetch its QR, but must not
+  hold a key that creates payments. Stripe's `client_secret` solves the same
+  problem.
+- Deriving the token instead of storing it means replays return the same
+  token without keeping another secret in the database.
+- A plain hash is enough for keys this random. Password-style slow hashing
+  protects low-entropy secrets, which these are not.
+- Without the namespace, anyone on the open demo endpoint who reused a
+  merchant's idempotency key would be handed the merchant's payment and its
+  `client_secret`.
+
+**Consequences.** Rotating `CLIENT_TOKEN_SECRET` invalidates the tokens of
+payments still in progress. Browsers already showing a checkout lose access
+to it and must be given the new token.

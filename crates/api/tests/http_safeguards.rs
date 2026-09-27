@@ -6,7 +6,7 @@ use std::time::Duration;
 use axum::body::Body;
 use axum::extract::ConnectInfo;
 use axum::http::{Request, StatusCode, header};
-use common::{FakeCards, TestApp, create_payment_request};
+use common::{FakeCards, TestApp, api_get, create_payment_request};
 use dual_rail_api::{HttpSettings, RateLimit};
 use serde_json::json;
 use sqlx::PgPool;
@@ -31,16 +31,14 @@ fn rate_limited(burst: u32, trust_proxy_headers: bool) -> HttpSettings {
 
 fn status_request(ip: [u8; 4]) -> Request<Body> {
     from_ip(
-        Request::get("/payments/00000000-0000-0000-0000-000000000000")
-            .body(Body::empty())
-            .unwrap(),
+        api_get("/payments/00000000-0000-0000-0000-000000000000"),
         ip,
     )
 }
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn every_response_carries_a_request_id(pool: PgPool) {
-    let app = TestApp::new(pool);
+    let app = TestApp::new(pool).await;
 
     let (_, generated, _) = app
         .send_full(Request::get("/health").body(Body::empty()).unwrap())
@@ -61,7 +59,7 @@ async fn every_response_carries_a_request_id(pool: PgPool) {
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn oversized_bodies_are_refused(pool: PgPool) {
-    let app = TestApp::new(pool);
+    let app = TestApp::new(pool).await;
     let huge = json!({ "method": "card", "amount_minor": 1000, "currency": "USD", "description": "x".repeat(100_000) });
 
     let declared = {
@@ -88,7 +86,7 @@ async fn a_request_cut_off_by_the_timeout_can_be_finished_by_retrying(pool: PgPo
         request_timeout: Duration::from_millis(100),
         ..HttpSettings::default()
     };
-    let app = TestApp::configured(pool, cards, settings);
+    let app = TestApp::configured(pool, cards, settings, false).await;
 
     let (timed_out, _) = app.create_card_payment("k", 1000).await;
     *app.cards.delay.lock().unwrap() = None;
@@ -106,7 +104,7 @@ async fn a_request_cut_off_by_the_timeout_can_be_finished_by_retrying(pool: PgPo
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn a_client_over_its_rate_is_told_when_to_retry(pool: PgPool) {
-    let app = TestApp::configured(pool, FakeCards::default(), rate_limited(2, false));
+    let app = TestApp::configured(pool, FakeCards::default(), rate_limited(2, false), false).await;
 
     let (first, _, _) = app.send_full(status_request([1, 1, 1, 1])).await;
     let (second, _, _) = app.send_full(status_request([1, 1, 1, 1])).await;
@@ -135,7 +133,7 @@ async fn a_client_over_its_rate_is_told_when_to_retry(pool: PgPool) {
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn stripe_webhooks_and_health_are_never_rate_limited(pool: PgPool) {
-    let app = TestApp::configured(pool, FakeCards::default(), rate_limited(1, false));
+    let app = TestApp::configured(pool, FakeCards::default(), rate_limited(1, false), false).await;
 
     for _ in 0..5 {
         let webhook = from_ip(
@@ -156,12 +154,12 @@ async fn stripe_webhooks_and_health_are_never_rate_limited(pool: PgPool) {
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn behind_a_trusted_proxy_the_forwarded_address_is_the_client(pool: PgPool) {
-    let app = TestApp::configured(pool, FakeCards::default(), rate_limited(1, true));
+    let app = TestApp::configured(pool, FakeCards::default(), rate_limited(1, true), false).await;
     let via_proxy = |client: &str| {
-        let request = Request::get("/payments/00000000-0000-0000-0000-000000000000")
-            .header("x-forwarded-for", client)
-            .body(Body::empty())
-            .unwrap();
+        let mut request = api_get("/payments/00000000-0000-0000-0000-000000000000");
+        request
+            .headers_mut()
+            .insert("x-forwarded-for", client.parse().unwrap());
         from_ip(request, [10, 0, 0, 1])
     };
 

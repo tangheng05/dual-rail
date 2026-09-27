@@ -14,7 +14,9 @@ anyhow.workspace = true
 axum.workspace = true
 clap.workspace = true
 dotenvy.workspace = true
+getrandom.workspace = true
 hex.workspace = true
+hmac.workspace = true
 khqr-api.workspace = true
 khqr-core = { workspace = true, features = ["image"] }
 rustls.workspace = true

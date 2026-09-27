@@ -1,14 +1,13 @@
 mod common;
 
-use axum::body::Body;
-use axum::http::{Request, StatusCode};
-use common::{FakeCards, TestApp, create_payment_request};
+use axum::http::StatusCode;
+use common::{FakeCards, TestApp, api_get, create_payment_request};
 use serde_json::json;
 use sqlx::PgPool;
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn creates_a_pending_card_payment_with_a_stripe_intent(pool: PgPool) {
-    let app = TestApp::new(pool);
+    let app = TestApp::new(pool).await;
 
     let (status, body) = app
         .send(create_payment_request(
@@ -29,13 +28,7 @@ async fn creates_a_pending_card_payment_with_a_stripe_intent(pool: PgPool) {
     assert_eq!(requests[0].payment_id.to_string(), id);
     assert_eq!(requests[0].description.as_deref(), Some("Demo order #1"));
 
-    let (status, fetched) = app
-        .send(
-            Request::get(format!("/payments/{id}"))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await;
+    let (status, fetched) = app.send(api_get(format!("/payments/{id}"))).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(fetched["status"], "pending");
     assert!(fetched.get("client_secret").is_none());
@@ -43,7 +36,7 @@ async fn creates_a_pending_card_payment_with_a_stripe_intent(pool: PgPool) {
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn rejects_invalid_requests(pool: PgPool) {
-    let app = TestApp::new(pool);
+    let app = TestApp::new(pool).await;
     let valid = json!({ "method": "card", "amount_minor": 1000, "currency": "USD" });
 
     let cases = [
@@ -79,7 +72,7 @@ async fn rejects_invalid_requests(pool: PgPool) {
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn stripe_outage_returns_bad_gateway_and_leaves_payment_pending(pool: PgPool) {
-    let app = TestApp::with_cards(pool.clone(), FakeCards::failing());
+    let app = TestApp::with_cards(pool.clone(), FakeCards::failing()).await;
 
     let (status, _) = app.create_card_payment("order-1", 1000).await;
 
@@ -95,14 +88,10 @@ async fn stripe_outage_returns_bad_gateway_and_leaves_payment_pending(pool: PgPo
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn unknown_payment_is_not_found(pool: PgPool) {
-    let app = TestApp::new(pool);
+    let app = TestApp::new(pool).await;
 
     let (status, _) = app
-        .send(
-            Request::get("/payments/00000000-0000-0000-0000-000000000000")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .send(api_get("/payments/00000000-0000-0000-0000-000000000000"))
         .await;
 
     assert_eq!(status, StatusCode::NOT_FOUND);
@@ -110,7 +99,7 @@ async fn unknown_payment_is_not_found(pool: PgPool) {
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn usd_amounts_outside_stripe_limits_are_rejected_before_calling_stripe(pool: PgPool) {
-    let app = TestApp::new(pool);
+    let app = TestApp::new(pool).await;
 
     let (too_small, _) = app.create_card_payment("order-1", 49).await;
     let (too_large, _) = app.create_card_payment("order-2", 100_000_000).await;
@@ -128,7 +117,8 @@ async fn stripe_rejection_fails_the_payment_instead_of_leaving_it_pending(pool: 
             reject: true,
             ..FakeCards::default()
         },
-    );
+    )
+    .await;
 
     let (first, body) = app
         .send(create_payment_request(

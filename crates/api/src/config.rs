@@ -26,6 +26,8 @@ pub struct Config {
     pub bakong_poll_interval: Duration,
     pub reconciliation_offset: UtcOffset,
     pub http: HttpSettings,
+    pub client_token_secret: String,
+    pub demo_mode: bool,
 }
 
 pub enum BakongEndpoint {
@@ -75,11 +77,11 @@ impl Config {
         if rate_limit_per_second > 1000 || (rate_limit_per_second > 0 && rate_limit_burst == 0) {
             bail!("RATE_LIMIT_PER_SECOND must be at most 1000, and RATE_LIMIT_BURST at least 1");
         }
-        let trust_proxy_headers = match optional("TRUST_PROXY_HEADERS").as_deref() {
-            None | Some("false") => false,
-            Some("true") => true,
-            Some(_) => bail!("TRUST_PROXY_HEADERS must be true or false"),
-        };
+        let trust_proxy_headers = flag("TRUST_PROXY_HEADERS")?;
+        let client_token_secret = required("CLIENT_TOKEN_SECRET")?;
+        if client_token_secret.len() < 32 {
+            bail!("CLIENT_TOKEN_SECRET must be at least 32 characters; use a random value");
+        }
         let http = HttpSettings {
             request_timeout: Duration::from_secs(request_timeout_secs),
             rate_limit: (rate_limit_per_second > 0).then_some(RateLimit {
@@ -126,6 +128,8 @@ impl Config {
             bakong_poll_interval: Duration::from_secs(poll_interval_secs),
             reconciliation_offset,
             http,
+            client_token_secret,
+            demo_mode: flag("DEMO_MODE")?,
         })
     }
 }
@@ -137,6 +141,14 @@ fn stripe_livemode(secret_key: &str) -> anyhow::Result<bool> {
         Some("sk_live_" | "rk_live_") => Ok(true),
         Some("sk_test_" | "rk_test_") => Ok(false),
         _ => bail!("STRIPE_SECRET_KEY must start with sk_live_, sk_test_, rk_live_ or rk_test_"),
+    }
+}
+
+fn flag(name: &str) -> anyhow::Result<bool> {
+    match optional(name).as_deref() {
+        None | Some("false") => Ok(false),
+        Some("true") => Ok(true),
+        Some(_) => bail!("{name} must be true or false"),
     }
 }
 

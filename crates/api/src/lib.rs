@@ -1,3 +1,4 @@
+mod auth;
 pub mod cli;
 mod config;
 mod demo;
@@ -13,12 +14,13 @@ mod stripe_webhook;
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::Router;
 use axum::routing::{get, post};
+use axum::{Router, middleware};
 use dual_rail_rails::card::CardGateway;
 use dual_rail_rails::khqr::{KhqrIssuer, KhqrVerifier};
 use sqlx::PgPool;
 
+pub use auth::{NewApiKey, generate_api_key, hash_api_key};
 pub use config::{BakongEndpoint, Config};
 pub use http::{HttpSettings, RateLimit};
 pub use khqr_poller::{poll_once, run as run_khqr_poller};
@@ -39,6 +41,10 @@ pub struct AppState {
     pub verifier: Arc<dyn KhqrVerifier>,
     pub khqr_ttl: Duration,
     pub http: HttpSettings,
+    /// Signs the client tokens a browser uses to read one payment.
+    pub client_token_secret: Arc<[u8]>,
+    /// Serves the demo page and its keyless create endpoint.
+    pub demo_mode: bool,
 }
 
 /// Several dependencies enable different rustls crypto backends, so rustls cannot
@@ -51,11 +57,19 @@ pub fn install_crypto_provider() {
 /// limit is set: it keys on the client's IP.
 pub fn app(state: AppState) -> Router {
     let settings = state.http;
-    let public = Router::new()
-        .route("/", get(demo::page))
-        .route("/payments", post(payments::create))
+    let require_api_key = middleware::from_fn_with_state(state.clone(), auth::require_api_key);
+    let mut public = Router::new()
+        .route(
+            "/payments",
+            post(payments::create).route_layer(require_api_key),
+        )
         .route("/payments/{id}", get(payments::get))
         .route("/payments/{id}/qr.svg", get(payments::qr_svg));
+    if state.demo_mode {
+        public = public
+            .route("/", get(demo::page))
+            .route("/demo/payments", post(payments::create_demo));
+    }
     let public = match settings.rate_limit {
         Some(limit) => http::rate_limited(public, limit),
         None => public,

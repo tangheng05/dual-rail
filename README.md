@@ -56,6 +56,7 @@ The reasoning behind each of these is in [docs/decisions.md](docs/decisions.md).
 | **Forged or replayed webhooks** | The HMAC-SHA256 is checked over the raw body before parsing, with a 300s tolerance. Every `v1` signature is tried, so rotating the webhook secret doesn't drop events. An event from the other Stripe mode (test vs live) is acknowledged but never settles anything. |
 | **Crash between steps** | The status change, the ledger entry and the event record commit together or not at all. A card payment's row exists before its Stripe intent, and Stripe's idempotency key is derived from our payment id, so a retry can never create a second charge. |
 | **Client retries** | `Idempotency-Key`: the same key and body replay the original payment (and finish a Stripe link a crash interrupted); a different body gets `409`. Concurrent identical requests create one row. |
+| **Unauthorized access** | Creating a payment needs an API key; reading one needs that key or the payment's own client token. Unauthenticated reads get 401 whether or not the payment exists, so ids can't be probed. |
 | **Abusive or broken clients** | Public routes are rate limited per client IP (429 with `Retry-After`); Stripe webhooks and `/health` are exempt. Bodies over 64 KiB get 413, requests over the timeout get 503, and a panic becomes a 500 instead of a dropped connection. Every response carries an `x-request-id` that also tags that request's log lines. |
 | **Late KHQR payment** | A payment is expired only after Bakong confirms "not paid" *after* the expiry plus a 2-minute grace, so a last-second payment still being indexed isn't lost. A transfer made after expiry is never auto-credited: it's flagged for review. |
 | **Bakong outage / geo restriction** | Bakong's production API only answers Cambodian IPs. Verification goes through a trait (direct, or a relay via `BAKONG_BASE_URL`). Production Bakong refuses the md5 *batch* endpoint with a 403, so the verifier falls back to single lookups. An outage never expires a payment; after 24h of failures it's flagged `unverifiable`. |
@@ -73,7 +74,13 @@ docker compose up --build             # app on http://localhost:8080, Postgres o
 stripe listen --forward-to localhost:8080/webhooks/stripe
 ```
 
-`stripe listen` prints a `whsec_...` secret. Put it in `.env` as `STRIPE_WEBHOOK_SECRET` and restart the app. Then open <http://localhost:8080>, choose Card, and pay with `4242 4242 4242 4242`.
+`stripe listen` prints a `whsec_...` secret. Put it in `.env` as `STRIPE_WEBHOOK_SECRET` and restart the app. Then open <http://localhost:8080>, choose Card, and pay with `4242 4242 4242 4242`. The compose file turns on `DEMO_MODE`, which serves that page; leave it off anywhere else.
+
+To call the API from your own backend, create a key (it's printed once, so store it):
+
+```sh
+docker compose run --rm app dual-rail-api keys create --name "shop backend"
+```
 
 Released images are also on the GitHub container registry, so you can skip the build:
 
@@ -92,6 +99,8 @@ KHQR needs a Bakong Open API token (`BAKONG_TOKEN`, sandbox by default) and a se
 | `STRIPE_SECRET_KEY` | yes | | Stripe secret key (`sk_test_...`) |
 | `STRIPE_WEBHOOK_SECRET` | yes | | Webhook signing secret (`whsec_...`) |
 | `STRIPE_PUBLISHABLE_KEY` | | | Enables cards on the demo page |
+| `CLIENT_TOKEN_SECRET` | yes | | At least 32 random characters; signs the client tokens. Changing it invalidates tokens already issued |
+| `DEMO_MODE` | | `false` | Serves the demo page and a keyless `POST /demo/payments`. Never enable in production |
 | `KHQR_ACCOUNT_ID` | yes | | Bakong account receiving payments, e.g. `name@bank` |
 | `KHQR_MERCHANT_NAME`, `KHQR_MERCHANT_CITY` | yes | | Shown in the customer's bank app |
 | `KHQR_MERCHANT_ID`, `KHQR_ACQUIRING_BANK` | | | Set both to issue merchant (not individual) QRs |
@@ -109,24 +118,29 @@ KHQR needs a Bakong Open API token (`BAKONG_TOKEN`, sandbox by default) and a se
 
 ## API
 
-| Method | Path | Purpose |
-|---|---|---|
-| `POST` | `/payments` | Create a payment. Requires `Idempotency-Key`. |
-| `GET` | `/payments/{id}` | Current status (the demo polls this) |
-| `GET` | `/payments/{id}/qr.svg` | The KHQR as an image |
-| `POST` | `/webhooks/stripe` | Stripe webhook receiver |
-| `GET` | `/health` | Liveness plus database check |
-| `GET` | `/` | Demo checkout page |
+| Method | Path | Auth | Purpose |
+|---|---|---|---|
+| `POST` | `/payments` | API key | Create a payment. Requires `Idempotency-Key`. |
+| `GET` | `/payments/{id}` | API key or client token | Current status |
+| `GET` | `/payments/{id}/qr.svg` | API key or client token | The KHQR as an image |
+| `POST` | `/webhooks/stripe` | Stripe signature | Stripe webhook receiver |
+| `GET` | `/health` | none | Liveness plus database check |
+| `GET` | `/`, `POST /demo/payments` | none, `DEMO_MODE` only | Demo checkout page and its create endpoint |
+
+**Two kinds of credentials:**
+- **API key** (`Authorization: Bearer drk_...`): your backend's key, created with `dual-rail-api keys create`. Only its SHA-256 hash is stored. You can hold several at once to rotate them, and `keys revoke` stops one immediately.
+- **Client token** (`X-Client-Token`): returned with every created payment. Pass it to the customer's browser; it can read that one payment and nothing else.
 
 ```http
 POST /payments
+Authorization: Bearer drk_...
 Idempotency-Key: 7f3c9b2e-...
 Content-Type: application/json
 
 { "method": "khqr", "amount_minor": 1000, "currency": "USD", "description": "Order #1" }
 ```
 
-`amount_minor` is in ISO 4217 minor units for every currency: `1000` is USD 10.00, and 1000 riel is `100000`. KHQR accepts whole riel only. The `201` response carries `client_secret` for cards, or `qr`, `md5` and `expires_at` for KHQR. A replay adds the header `Idempotent-Replayed: true`.
+`amount_minor` is in ISO 4217 minor units for every currency: `1000` is USD 10.00, and 1000 riel is `100000`. KHQR accepts whole riel only. The `201` response carries a `client_token`, plus `client_secret` for cards, or `qr`, `md5` and `expires_at` for KHQR. A replay adds the header `Idempotent-Replayed: true`. Idempotency keys are scoped to the caller: a key used through the demo endpoint never matches one used with an API key.
 
 ## Reconciliation
 

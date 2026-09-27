@@ -2,14 +2,16 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use clap::Parser;
-use dual_rail_api::cli::{Cli, Command, FlagsCommand};
+use dual_rail_api::cli::{Cli, Command, FlagsCommand, KeysCommand};
 use dual_rail_api::{AppState, BakongEndpoint, Config};
 use dual_rail_core::{Currency, Money};
 use dual_rail_rails::card::StripeGateway;
 use dual_rail_rails::khqr::{BakongVerifier, KhqrIssuer};
+use dual_rail_store::api_keys::{self, Revoked};
 use dual_rail_store::reviews::{self, Resolved};
 use khqr_api::{BakongClient, Environment};
 use serde_json::json;
+use sqlx::PgPool;
 use time::OffsetDateTime;
 use tokio::net::TcpListener;
 use tokio::signal;
@@ -38,6 +40,7 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
         Command::Flags(command) => flags(command).await,
+        Command::Keys(command) => keys(command).await,
     }
 }
 
@@ -104,14 +107,55 @@ async fn build_state() -> anyhow::Result<(Config, AppState)> {
         verifier: Arc::new(BakongVerifier::new(bakong)),
         khqr_ttl: config.khqr_ttl,
         http: config.http,
+        client_token_secret: config.client_token_secret.as_bytes().into(),
+        demo_mode: config.demo_mode,
     };
     Ok((config, state))
 }
 
-async fn flags(command: FlagsCommand) -> anyhow::Result<()> {
+async fn connect_from_env() -> anyhow::Result<PgPool> {
     let database_url =
         std::env::var("DATABASE_URL").map_err(|_| anyhow::anyhow!("DATABASE_URL must be set"))?;
-    let pool = dual_rail_store::connect(&database_url).await?;
+    Ok(dual_rail_store::connect(&database_url).await?)
+}
+
+async fn keys(command: KeysCommand) -> anyhow::Result<()> {
+    let pool = connect_from_env().await?;
+    match command {
+        KeysCommand::Create { name } => {
+            let key = dual_rail_api::generate_api_key();
+            let id = api_keys::insert(&pool, &name, &key.prefix, &key.hash).await?;
+            println!("{}", key.key);
+            eprintln!("created key {id} ({name}); it can't be shown again, so store it now");
+        }
+        KeysCommand::List => {
+            let keys: Vec<_> = api_keys::list(&pool)
+                .await?
+                .into_iter()
+                .map(|key| {
+                    json!({
+                        "id": key.id,
+                        "name": key.name,
+                        "prefix": key.prefix,
+                        "created_at": key.created_at.to_string(),
+                        "last_used_at": key.last_used_at.map(|at| at.to_string()),
+                        "revoked_at": key.revoked_at.map(|at| at.to_string()),
+                    })
+                })
+                .collect();
+            println!("{}", serde_json::to_string_pretty(&keys)?);
+        }
+        KeysCommand::Revoke { id } => match api_keys::revoke(&pool, id).await? {
+            Revoked::Now => println!("revoked {id}"),
+            Revoked::Already => anyhow::bail!("key {id} is already revoked"),
+            Revoked::NotFound => anyhow::bail!("no API key {id}"),
+        },
+    }
+    Ok(())
+}
+
+async fn flags(command: FlagsCommand) -> anyhow::Result<()> {
+    let pool = connect_from_env().await?;
 
     match command {
         FlagsCommand::List { all } => {

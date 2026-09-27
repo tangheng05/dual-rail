@@ -61,7 +61,7 @@ async fn settled_khqr_payment(app: &TestApp, key: &str) -> (String, String) {
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn clean_day_completes_with_no_mismatches(pool: PgPool) {
-    let app = TestApp::new(pool);
+    let app = TestApp::new(pool).await;
     settled_card_payment(&app, "card").await;
     settled_khqr_payment(&app, "khqr").await;
     let before = app.money_state().await;
@@ -79,7 +79,7 @@ async fn clean_day_completes_with_no_mismatches(pool: PgPool) {
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn lost_stripe_webhook_is_missing_in_ledger(pool: PgPool) {
-    let app = TestApp::new(pool);
+    let app = TestApp::new(pool).await;
     let id = card_payment(&app, "card").await;
     app.stripe_succeeds(&id, 1000);
     let before = app.money_state().await;
@@ -93,7 +93,7 @@ async fn lost_stripe_webhook_is_missing_in_ledger(pool: PgPool) {
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn success_stripe_does_not_confirm_is_missing_at_provider(pool: PgPool) {
-    let app = TestApp::new(pool);
+    let app = TestApp::new(pool).await;
     let unconfirmed = card_payment(&app, "unconfirmed").await;
     app.deliver(&payment_intent_event(
         "evt_1",
@@ -121,7 +121,7 @@ async fn success_stripe_does_not_confirm_is_missing_at_provider(pool: PgPool) {
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn stripe_amount_differing_from_ledger_is_an_amount_mismatch(pool: PgPool) {
-    let app = TestApp::new(pool);
+    let app = TestApp::new(pool).await;
     let id = settled_card_payment(&app, "card").await;
     app.stripe_succeeds(&id, 999);
 
@@ -132,7 +132,7 @@ async fn stripe_amount_differing_from_ledger_is_an_amount_mismatch(pool: PgPool)
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn khqr_bakong_no_longer_confirms_is_missing_at_provider(pool: PgPool) {
-    let app = TestApp::new(pool);
+    let app = TestApp::new(pool).await;
     let (id, md5) = settled_khqr_payment(&app, "khqr").await;
     app.bakong.paid.lock().unwrap().remove(&md5);
 
@@ -143,7 +143,7 @@ async fn khqr_bakong_no_longer_confirms_is_missing_at_provider(pool: PgPool) {
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn khqr_paid_after_we_expired_it_is_flagged_not_credited(pool: PgPool) {
-    let app = TestApp::new(pool);
+    let app = TestApp::new(pool).await;
     let (id, md5) = khqr_payment(&app, "khqr").await;
     app.expire(&id, "3 minutes").await;
     app.poll().await;
@@ -160,7 +160,7 @@ async fn khqr_paid_after_we_expired_it_is_flagged_not_credited(pool: PgPool) {
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn payment_pending_for_days_is_stale(pool: PgPool) {
-    let app = TestApp::new(pool);
+    let app = TestApp::new(pool).await;
     let id = card_payment(&app, "card").await;
     sqlx::query("update payments set created_at = now() - interval '3 days' where id = $1::uuid")
         .bind(&id)
@@ -175,7 +175,7 @@ async fn payment_pending_for_days_is_stale(pool: PgPool) {
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn tampered_ledger_is_an_unbalanced_entry(pool: PgPool) {
-    let app = TestApp::new(pool);
+    let app = TestApp::new(pool).await;
     let id = settled_card_payment(&app, "card").await;
     sqlx::raw_sql(
         "alter table ledger_lines disable trigger ledger_lines_append_only;
@@ -193,7 +193,7 @@ async fn tampered_ledger_is_an_unbalanced_entry(pool: PgPool) {
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn provider_outage_makes_the_run_incomplete(pool: PgPool) {
-    let app = TestApp::new(pool);
+    let app = TestApp::new(pool).await;
     let (id, _) = settled_khqr_payment(&app, "khqr").await;
     app.bakong.down.store(true, Ordering::SeqCst);
 
@@ -205,7 +205,7 @@ async fn provider_outage_makes_the_run_incomplete(pool: PgPool) {
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn finished_day_is_skipped_by_the_scheduler_but_can_be_rerun_manually(pool: PgPool) {
-    let app = TestApp::new(pool);
+    let app = TestApp::new(pool).await;
     let first = app.reconcile_today().await;
 
     assert!(
@@ -234,7 +234,7 @@ async fn only_one_run_per_day_can_be_in_progress(pool: PgPool) {
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn incomplete_day_is_retried_hourly(pool: PgPool) {
-    let app = TestApp::new(pool);
+    let app = TestApp::new(pool).await;
     settled_khqr_payment(&app, "khqr").await;
     app.bakong.down.store(true, Ordering::SeqCst);
     let run = app.reconcile_today().await;

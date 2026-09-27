@@ -2,9 +2,8 @@ mod common;
 
 use std::sync::atomic::Ordering;
 
-use axum::body::Body;
-use axum::http::{Request, StatusCode};
-use common::{KHQR_ACCOUNT, TestApp, unix_now_ms};
+use axum::http::StatusCode;
+use common::{KHQR_ACCOUNT, TestApp, api_get, unix_now_ms};
 use dual_rail_rails::khqr::KhqrTransfer;
 use sqlx::PgPool;
 
@@ -41,7 +40,7 @@ fn credited(amount: i64) -> Vec<(String, String, i64)> {
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn creates_a_khqr_payment_with_a_scannable_qr(pool: PgPool) {
-    let app = TestApp::new(pool);
+    let app = TestApp::new(pool).await;
 
     let (status, body) = app.create_khqr_payment("order-1", 500_000, "KHR").await;
 
@@ -55,13 +54,7 @@ async fn creates_a_khqr_payment_with_a_scannable_qr(pool: PgPool) {
     assert!(body["expires_at"].as_str().is_some());
 
     let id = body["id"].as_str().unwrap();
-    let (status, fetched) = app
-        .send(
-            Request::get(format!("/payments/{id}"))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await;
+    let (status, fetched) = app.send(api_get(format!("/payments/{id}"))).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(fetched["qr"], body["qr"]);
     assert_eq!(fetched["md5"], body["md5"]);
@@ -69,7 +62,7 @@ async fn creates_a_khqr_payment_with_a_scannable_qr(pool: PgPool) {
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn rejects_fractional_riel_and_keys_reused_for_a_different_request(pool: PgPool) {
-    let app = TestApp::new(pool);
+    let app = TestApp::new(pool).await;
 
     let (fractional, _) = app.create_khqr_payment("order-1", 50_070, "KHR").await;
     new_khqr(&app, "order-2").await;
@@ -81,7 +74,7 @@ async fn rejects_fractional_riel_and_keys_reused_for_a_different_request(pool: P
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn paid_qr_settles_into_the_bakong_clearing_account(pool: PgPool) {
-    let app = TestApp::new(pool);
+    let app = TestApp::new(pool).await;
     let payment = new_khqr(&app, "order-1").await;
     app.pay(&payment.md5, transfer("hash-1", 1000, unix_now_ms()));
 
@@ -93,7 +86,7 @@ async fn paid_qr_settles_into_the_bakong_clearing_account(pool: PgPool) {
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn unpaid_qr_stays_pending_and_backs_off(pool: PgPool) {
-    let app = TestApp::new(pool);
+    let app = TestApp::new(pool).await;
     let payment = new_khqr(&app, "order-1").await;
 
     assert_eq!(app.poll().await, 1);
@@ -108,7 +101,7 @@ async fn unpaid_qr_stays_pending_and_backs_off(pool: PgPool) {
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn unpaid_qr_expires_only_after_the_grace_period(pool: PgPool) {
-    let app = TestApp::new(pool);
+    let app = TestApp::new(pool).await;
     let payment = new_khqr(&app, "order-1").await;
 
     app.expire(&payment.id, "1 second").await;
@@ -127,7 +120,7 @@ async fn unpaid_qr_expires_only_after_the_grace_period(pool: PgPool) {
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn payment_made_before_expiry_but_seen_after_is_credited(pool: PgPool) {
-    let app = TestApp::new(pool);
+    let app = TestApp::new(pool).await;
     let payment = new_khqr(&app, "order-1").await;
     app.expire(&payment.id, "10 seconds").await;
     app.pay(
@@ -143,7 +136,7 @@ async fn payment_made_before_expiry_but_seen_after_is_credited(pool: PgPool) {
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn small_clock_skew_past_expiry_is_still_credited(pool: PgPool) {
-    let app = TestApp::new(pool);
+    let app = TestApp::new(pool).await;
     let payment = new_khqr(&app, "order-1").await;
     app.expire(&payment.id, "3 minutes").await;
     app.pay(
@@ -159,7 +152,7 @@ async fn small_clock_skew_past_expiry_is_still_credited(pool: PgPool) {
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn payment_made_after_expiry_is_flagged_not_credited(pool: PgPool) {
-    let app = TestApp::new(pool);
+    let app = TestApp::new(pool).await;
     let payment = new_khqr(&app, "order-1").await;
     app.expire(&payment.id, "5 minutes").await;
     app.pay(&payment.md5, transfer("hash-1", 1000, unix_now_ms()));
@@ -176,7 +169,7 @@ async fn payment_made_after_expiry_is_flagged_not_credited(pool: PgPool) {
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn bakong_outage_never_expires_a_payment(pool: PgPool) {
-    let app = TestApp::new(pool);
+    let app = TestApp::new(pool).await;
     let payment = new_khqr(&app, "order-1").await;
     app.bakong.down.store(true, Ordering::SeqCst);
     app.expire(&payment.id, "1 minute").await;
@@ -189,7 +182,7 @@ async fn bakong_outage_never_expires_a_payment(pool: PgPool) {
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn unverifiable_payment_is_flagged_and_polling_stops(pool: PgPool) {
-    let app = TestApp::new(pool);
+    let app = TestApp::new(pool).await;
     let payment = new_khqr(&app, "order-1").await;
     app.bakong.down.store(true, Ordering::SeqCst);
     app.expire(&payment.id, "25 hours").await;
@@ -209,7 +202,7 @@ async fn unverifiable_payment_is_flagged_and_polling_stops(pool: PgPool) {
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn mismatched_transfer_is_flagged_not_credited(pool: PgPool) {
-    let app = TestApp::new(pool);
+    let app = TestApp::new(pool).await;
     let wrong_amount = new_khqr(&app, "order-1").await;
     let wrong_account = new_khqr(&app, "order-2").await;
     app.pay(&wrong_amount.md5, transfer("hash-1", 999, unix_now_ms()));
@@ -241,7 +234,7 @@ async fn mismatched_transfer_is_flagged_not_credited(pool: PgPool) {
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn repeated_and_concurrent_polls_credit_once(pool: PgPool) {
-    let app = TestApp::new(pool);
+    let app = TestApp::new(pool).await;
     let payment = new_khqr(&app, "order-1").await;
     app.pay(&payment.md5, transfer("hash-1", 1000, unix_now_ms()));
 
@@ -259,7 +252,7 @@ async fn repeated_and_concurrent_polls_credit_once(pool: PgPool) {
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn one_bakong_transfer_never_credits_two_payments(pool: PgPool) {
-    let app = TestApp::new(pool);
+    let app = TestApp::new(pool).await;
     let first = new_khqr(&app, "order-1").await;
     let second = new_khqr(&app, "order-2").await;
     app.pay(&first.md5, transfer("same-hash", 1000, unix_now_ms()));

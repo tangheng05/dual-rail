@@ -4,7 +4,7 @@ use std::sync::atomic::Ordering;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use common::{FakeCards, TestApp, create_payment_request, payment_intent_event};
+use common::{API_KEY, FakeCards, TestApp, create_payment_request, payment_intent_event};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 
@@ -27,7 +27,7 @@ async fn payment_count(app: &TestApp) -> i64 {
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn same_key_and_body_replays_the_original_payment(pool: PgPool) {
-    let app = TestApp::new(pool);
+    let app = TestApp::new(pool).await;
 
     let (first_status, first_headers, first) = app
         .send_full(create_payment_request(Some("k"), card(1000)))
@@ -51,7 +51,7 @@ async fn same_key_and_body_replays_the_original_payment(pool: PgPool) {
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn json_key_order_and_whitespace_do_not_change_the_request(pool: PgPool) {
-    let app = TestApp::new(pool);
+    let app = TestApp::new(pool).await;
     let reordered = r#"{ "description": "Order #1",
         "currency": "USD", "amount_minor": 1000, "method": "card" }"#;
 
@@ -63,6 +63,7 @@ async fn json_key_order_and_whitespace_do_not_change_the_request(pool: PgPool) {
             Request::post("/payments")
                 .header("content-type", "application/json")
                 .header("idempotency-key", "k")
+                .header("authorization", format!("Bearer {API_KEY}"))
                 .body(Body::from(reordered))
                 .unwrap(),
         )
@@ -75,7 +76,7 @@ async fn json_key_order_and_whitespace_do_not_change_the_request(pool: PgPool) {
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn same_key_with_a_different_request_conflicts(pool: PgPool) {
-    let app = TestApp::new(pool);
+    let app = TestApp::new(pool).await;
     app.send(create_payment_request(Some("k"), card(1000)))
         .await;
 
@@ -98,7 +99,7 @@ async fn same_key_with_a_different_request_conflicts(pool: PgPool) {
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn retry_after_stripe_outage_links_the_same_payment(pool: PgPool) {
-    let app = TestApp::with_cards(pool, FakeCards::failing());
+    let app = TestApp::with_cards(pool, FakeCards::failing()).await;
 
     let (failed, _) = app
         .send(create_payment_request(Some("k"), card(1000)))
@@ -123,7 +124,7 @@ async fn retry_after_stripe_outage_links_the_same_payment(pool: PgPool) {
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn request_still_in_progress_at_stripe_is_not_failed(pool: PgPool) {
-    let app = TestApp::with_cards(pool, FakeCards::failing());
+    let app = TestApp::with_cards(pool, FakeCards::failing()).await;
     app.send(create_payment_request(Some("k"), card(1000)))
         .await;
     app.cards.fail.store(false, Ordering::SeqCst);
@@ -149,7 +150,8 @@ async fn rejected_payment_replays_the_rejection_without_calling_stripe(pool: PgP
             reject: true,
             ..FakeCards::default()
         },
-    );
+    )
+    .await;
 
     let (first, _) = app
         .send(create_payment_request(Some("k"), card(1000)))
@@ -166,7 +168,7 @@ async fn rejected_payment_replays_the_rejection_without_calling_stripe(pool: PgP
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn replay_after_settlement_returns_the_current_state(pool: PgPool) {
-    let app = TestApp::new(pool);
+    let app = TestApp::new(pool).await;
     let (_, created) = app
         .send(create_payment_request(Some("k"), card(1000)))
         .await;
@@ -193,7 +195,7 @@ async fn replay_after_settlement_returns_the_current_state(pool: PgPool) {
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn concurrent_identical_requests_create_one_payment(pool: PgPool) {
-    let app = TestApp::new(pool);
+    let app = TestApp::new(pool).await;
 
     let request = || app.send(create_payment_request(Some("k"), card(1000)));
     let (a, b, c, d, e) = tokio::join!(request(), request(), request(), request(), request());
@@ -216,7 +218,7 @@ async fn concurrent_identical_requests_create_one_payment(pool: PgPool) {
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn khqr_replay_returns_the_same_qr(pool: PgPool) {
-    let app = TestApp::new(pool);
+    let app = TestApp::new(pool).await;
 
     let (_, first) = app.create_khqr_payment("k", 1000, "USD").await;
     let (status, second) = app.create_khqr_payment("k", 1000, "USD").await;
@@ -232,7 +234,7 @@ async fn khqr_replay_returns_the_same_qr(pool: PgPool) {
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn rejected_validation_does_not_consume_the_key(pool: PgPool) {
-    let app = TestApp::new(pool);
+    let app = TestApp::new(pool).await;
 
     let (invalid, _) = app.send(create_payment_request(Some("k"), card(0))).await;
     let (valid, _) = app

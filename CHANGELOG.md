@@ -4,6 +4,28 @@ All notable changes to this project are recorded here. The project follows
 [semantic versioning](https://semver.org); before 1.0, any release may change
 behavior, and this file says how.
 
+## Unreleased
+
+### Breaking
+
+- `POST /payments` requires an API key (`Authorization: Bearer drk_...`), and
+  reading a payment requires that key or the payment's `client_token`. Create
+  keys with `dual-rail-api keys create`. `CLIENT_TOKEN_SECRET` is now required.
+- The demo page and its endpoint (`POST /demo/payments`) are served only with
+  `DEMO_MODE=true`.
+
+### Added
+
+- `dual-rail-api keys create | list | revoke`, and `flags list | resolve` for
+  the review queue.
+- Request timeouts (503), a 64 KiB body limit (413), per-IP rate limiting on
+  public routes (429 with `Retry-After`), request ids on every response and log
+  line, and panic recovery.
+- Stripe events from the other mode than the configured key (test vs live) are
+  acknowledged and ignored.
+- CI checks the minimum Rust version (1.94), dependency licenses and
+  advisories, test coverage and the Docker build.
+
 ## 0.1.0
 
 The first release: card payments through Stripe and Bakong KHQR payments
