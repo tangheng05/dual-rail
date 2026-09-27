@@ -178,3 +178,16 @@ async fn events_for_other_integrations_are_acknowledged_and_ignored(pool: PgPool
     assert_eq!(app.deliver(&unrelated).await, StatusCode::OK);
     assert_eq!(app.status_of(&id).await, "pending");
 }
+
+#[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
+async fn an_event_from_the_other_mode_never_settles_a_payment(pool: PgPool) {
+    let app = TestApp::new(pool);
+    let id = new_payment(&app).await;
+    let mut live_event = payment_intent_event("evt_1", "payment_intent.succeeded", &id, 1000);
+    live_event["livemode"] = json!(true);
+
+    assert_eq!(app.deliver(&live_event).await, StatusCode::OK);
+
+    assert_eq!(app.status_of(&id).await, "pending");
+    assert!(app.ledger_lines_for(&id).await.is_empty());
+}

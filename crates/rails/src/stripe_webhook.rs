@@ -74,6 +74,7 @@ fn signed_mac(payload: &[u8], secret: &str, timestamp: i64) -> Hmac<Sha256> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Event {
     pub id: String,
+    pub livemode: bool,
     pub kind: EventKind,
 }
 
@@ -100,6 +101,8 @@ pub fn parse_event(payload: &[u8]) -> Result<Event, serde_json::Error> {
     #[derive(Deserialize)]
     struct Envelope {
         id: String,
+        #[serde(default)]
+        livemode: bool,
         #[serde(rename = "type")]
         kind: String,
         data: Data,
@@ -120,6 +123,7 @@ pub fn parse_event(payload: &[u8]) -> Result<Event, serde_json::Error> {
     };
     Ok(Event {
         id: envelope.id,
+        livemode: envelope.livemode,
         kind,
     })
 }
@@ -197,7 +201,7 @@ mod tests {
     #[test]
     fn parses_payment_intent_events_and_ignores_others() {
         let succeeded = parse_event(
-            br#"{"id":"evt_1","type":"payment_intent.succeeded","api_version":"2099-01-01",
+            br#"{"id":"evt_1","livemode":true,"type":"payment_intent.succeeded","api_version":"2099-01-01",
                 "data":{"object":{"id":"pi_1","amount_received":1000,"currency":"usd",
                 "metadata":{"payment_id":"abc"},"some_future_field":{"x":1}}}}"#,
         )
@@ -206,6 +210,7 @@ mod tests {
             succeeded,
             Event {
                 id: "evt_1".to_owned(),
+                livemode: true,
                 kind: EventKind::PaymentIntentSucceeded(PaymentIntent {
                     id: "pi_1".to_owned(),
                     amount_received: 1000,

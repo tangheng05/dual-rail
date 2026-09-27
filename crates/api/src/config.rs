@@ -13,6 +13,7 @@ pub struct Config {
     pub database_url: String,
     pub bind_addr: SocketAddr,
     pub stripe_secret_key: String,
+    pub stripe_livemode: bool,
     pub stripe_webhook_secret: String,
     pub stripe_publishable_key: Option<String>,
     pub khqr_account: MerchantAccount,
@@ -56,6 +57,8 @@ impl Config {
             .context("RECONCILIATION_UTC_OFFSET must look like +07:00")?,
             None => CAMBODIA,
         };
+        let stripe_secret_key = required("STRIPE_SECRET_KEY")?;
+        let stripe_livemode = stripe_livemode(&stripe_secret_key)?;
         let stripe_publishable_key = optional("STRIPE_PUBLISHABLE_KEY");
         // It is written into the demo page's HTML, so only a key's own characters pass.
         if let Some(key) = &stripe_publishable_key
@@ -74,7 +77,8 @@ impl Config {
         Ok(Self {
             database_url: required("DATABASE_URL")?,
             bind_addr,
-            stripe_secret_key: required("STRIPE_SECRET_KEY")?,
+            stripe_secret_key,
+            stripe_livemode,
             stripe_webhook_secret: required("STRIPE_WEBHOOK_SECRET")?,
             stripe_publishable_key,
             khqr_account: MerchantAccount {
@@ -94,10 +98,36 @@ impl Config {
     }
 }
 
+/// Whether the key is a live one. Secret (`sk_`) and restricted (`rk_`) keys both
+/// say their mode in the prefix.
+fn stripe_livemode(secret_key: &str) -> anyhow::Result<bool> {
+    match secret_key.get(..8) {
+        Some("sk_live_" | "rk_live_") => Ok(true),
+        Some("sk_test_" | "rk_test_") => Ok(false),
+        _ => bail!("STRIPE_SECRET_KEY must start with sk_live_, sk_test_, rk_live_ or rk_test_"),
+    }
+}
+
 fn required(name: &str) -> anyhow::Result<String> {
     optional(name).with_context(|| format!("{name} must be set"))
 }
 
 fn optional(name: &str) -> Option<String> {
     env::var(name).ok().filter(|value| !value.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_stripe_key_prefix_decides_the_mode() {
+        assert!(stripe_livemode("sk_live_abc").unwrap());
+        assert!(stripe_livemode("rk_live_abc").unwrap());
+        assert!(!stripe_livemode("sk_test_abc").unwrap());
+        assert!(!stripe_livemode("rk_test_abc").unwrap());
+        for key in ["pk_live_abc", "whsec_abc", "sk_abc", ""] {
+            assert!(stripe_livemode(key).is_err(), "{key}");
+        }
+    }
 }

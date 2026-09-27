@@ -30,6 +30,8 @@ pub struct AppState {
     pub pool: PgPool,
     pub cards: Arc<dyn CardGateway>,
     pub stripe_webhook_secret: Arc<str>,
+    /// Whether the Stripe key is a live one; events from the other mode are ignored.
+    pub stripe_livemode: bool,
     pub stripe_publishable_key: Option<Arc<str>>,
     pub khqr: Arc<KhqrIssuer>,
     pub verifier: Arc<dyn KhqrVerifier>,

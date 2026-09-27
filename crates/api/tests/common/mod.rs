@@ -167,6 +167,7 @@ impl TestApp {
             pool: pool.clone(),
             cards: cards.clone(),
             stripe_webhook_secret: WEBHOOK_SECRET.into(),
+            stripe_livemode: false,
             stripe_publishable_key: Some("pk_test_demo".into()),
             khqr: Arc::new(KhqrIssuer::new(MerchantAccount {
                 account_id: KHQR_ACCOUNT.to_owned(),

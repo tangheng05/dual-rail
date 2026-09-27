@@ -96,6 +96,7 @@ async fn build_state() -> anyhow::Result<(Config, AppState)> {
         pool,
         cards: Arc::new(StripeGateway::new(&config.stripe_secret_key)?),
         stripe_webhook_secret: config.stripe_webhook_secret.as_str().into(),
+        stripe_livemode: config.stripe_livemode,
         stripe_publishable_key: config.stripe_publishable_key.as_deref().map(Into::into),
         khqr: Arc::new(khqr),
         verifier: Arc::new(BakongVerifier::new(bakong)),

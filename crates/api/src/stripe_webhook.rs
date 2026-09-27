@@ -32,6 +32,14 @@ pub async fn receive(
         tracing::error!(%err, "signed stripe webhook could not be parsed");
         ApiError::BadRequest("unreadable event".to_owned())
     })?;
+    if event.livemode != state.stripe_livemode {
+        tracing::error!(
+            event_id = %event.id,
+            event_livemode = event.livemode,
+            "stripe event from the other mode ignored; this endpoint's key is for the other mode"
+        );
+        return Ok(StatusCode::OK);
+    }
 
     match event.kind {
         EventKind::PaymentIntentSucceeded(intent) => {
