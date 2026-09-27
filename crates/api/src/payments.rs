@@ -183,7 +183,7 @@ async fn create_khqr(
 ) -> Result<Response, ApiError> {
     let method = PaymentMethod::Khqr;
     let payment_id = Uuid::new_v4();
-    let created_at = OffsetDateTime::now_utc();
+    let created_at = whole_millis(OffsetDateTime::now_utc());
     let expires_at = created_at + state.khqr_ttl;
     let qr = state
         .khqr
@@ -372,6 +372,13 @@ fn fingerprint(method: PaymentMethod, amount: Money, description: Option<&str>) 
     hex::encode(Sha256::digest(canonical.to_string()))
 }
 
+/// The QR carries milliseconds and Postgres keeps microseconds, so a clock with
+/// nanoseconds would make the QR, the stored row and the response disagree.
+fn whole_millis(at: OffsetDateTime) -> OffsetDateTime {
+    at.replace_nanosecond(at.nanosecond() / 1_000_000 * 1_000_000)
+        .expect("rounding down keeps the nanosecond in range")
+}
+
 fn unix_ms(at: OffsetDateTime) -> u64 {
     u64::try_from(at.unix_timestamp_nanos() / 1_000_000).unwrap_or(0)
 }
@@ -388,4 +395,21 @@ fn idempotency_key(headers: &HeaderMap) -> Result<&str, ApiError> {
         )));
     }
     Ok(key)
+}
+
+#[cfg(test)]
+mod tests {
+    use time::macros::datetime;
+
+    use super::*;
+
+    #[test]
+    fn khqr_timestamps_are_whole_milliseconds() {
+        let from_a_nanosecond_clock = datetime!(2026-09-27 05:37:36.992_330_72 UTC);
+
+        let stored = whole_millis(from_a_nanosecond_clock);
+
+        assert_eq!(stored, datetime!(2026-09-27 05:37:36.992 UTC));
+        assert_eq!(unix_ms(stored), unix_ms(from_a_nanosecond_clock));
+    }
 }
