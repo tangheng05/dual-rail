@@ -15,6 +15,8 @@ pub struct Payment {
     pub provider_ref: Option<String>,
     pub khqr_payload: Option<String>,
     pub expires_at: Option<OffsetDateTime>,
+    pub description: Option<String>,
+    pub request_hash: Option<String>,
 }
 
 struct PaymentRow {
@@ -27,6 +29,8 @@ struct PaymentRow {
     provider_ref: Option<String>,
     khqr_payload: Option<String>,
     expires_at: Option<OffsetDateTime>,
+    description: Option<String>,
+    request_hash: Option<String>,
 }
 
 impl TryFrom<PaymentRow> for Payment {
@@ -43,6 +47,8 @@ impl TryFrom<PaymentRow> for Payment {
             provider_ref: row.provider_ref,
             khqr_payload: row.khqr_payload,
             expires_at: row.expires_at,
+            description: row.description,
+            request_hash: row.request_hash,
         })
     }
 }
@@ -51,6 +57,7 @@ pub struct NewKhqrPayment<'a> {
     pub id: Uuid,
     pub amount: Money,
     pub idempotency_key: &'a str,
+    pub request_hash: &'a str,
     pub payload: &'a str,
     pub md5: &'a str,
     pub expires_at: OffsetDateTime,
@@ -69,24 +76,33 @@ pub struct DueKhqr {
     pub past_verification_deadline: bool,
 }
 
+pub struct NewPayment<'a> {
+    pub method: PaymentMethod,
+    pub provider: Provider,
+    pub amount: Money,
+    pub idempotency_key: &'a str,
+    pub request_hash: &'a str,
+    pub description: Option<&'a str>,
+}
+
 /// Returns None when the idempotency key is already taken.
 pub async fn insert_pending(
     pool: &PgPool,
-    method: PaymentMethod,
-    provider: Provider,
-    amount: Money,
-    idempotency_key: &str,
+    payment: &NewPayment<'_>,
 ) -> Result<Option<Uuid>, sqlx::Error> {
     sqlx::query_scalar!(
-        "insert into payments (method, provider, status, amount_minor, currency, idempotency_key)
-         values ($1, $2, 'pending', $3, $4, $5)
+        "insert into payments (method, provider, status, amount_minor, currency, idempotency_key,
+                               request_hash, description)
+         values ($1, $2, 'pending', $3, $4, $5, $6, $7)
          on conflict (idempotency_key) do nothing
          returning id",
-        method.as_str(),
-        provider.as_str(),
-        amount.amount_minor(),
-        amount.currency().as_str(),
-        idempotency_key,
+        payment.method.as_str(),
+        payment.provider.as_str(),
+        payment.amount.amount_minor(),
+        payment.amount.currency().as_str(),
+        payment.idempotency_key,
+        payment.request_hash,
+        payment.description,
     )
     .fetch_optional(pool)
     .await
@@ -99,13 +115,15 @@ pub async fn insert_pending_khqr(
 ) -> Result<bool, sqlx::Error> {
     let inserted = sqlx::query!(
         "insert into payments (id, method, provider, status, amount_minor, currency,
-                               idempotency_key, provider_ref, khqr_payload, expires_at, next_check_at)
-         values ($1, 'khqr', 'bakong', 'pending', $2, $3, $4, $5, $6, $7, now())
+                               idempotency_key, request_hash, provider_ref, khqr_payload,
+                               expires_at, next_check_at)
+         values ($1, 'khqr', 'bakong', 'pending', $2, $3, $4, $5, $6, $7, $8, now())
          on conflict (idempotency_key) do nothing",
         payment.id,
         payment.amount.amount_minor(),
         payment.amount.currency().as_str(),
         payment.idempotency_key,
+        payment.request_hash,
         payment.md5,
         payment.payload,
         payment.expires_at,
@@ -135,9 +153,26 @@ pub async fn find(pool: &PgPool, id: Uuid) -> Result<Option<Payment>, sqlx::Erro
     sqlx::query_as!(
         PaymentRow,
         "select id, method, provider, status, amount_minor, currency, provider_ref,
-                khqr_payload, expires_at
+                khqr_payload, expires_at, description, request_hash
          from payments where id = $1",
         id,
+    )
+    .fetch_optional(pool)
+    .await?
+    .map(Payment::try_from)
+    .transpose()
+}
+
+pub async fn find_by_idempotency_key(
+    pool: &PgPool,
+    idempotency_key: &str,
+) -> Result<Option<Payment>, sqlx::Error> {
+    sqlx::query_as!(
+        PaymentRow,
+        "select id, method, provider, status, amount_minor, currency, provider_ref,
+                khqr_payload, expires_at, description, request_hash
+         from payments where idempotency_key = $1",
+        idempotency_key,
     )
     .fetch_optional(pool)
     .await?
@@ -149,7 +184,7 @@ pub async fn lock(conn: &mut PgConnection, id: Uuid) -> Result<Option<Payment>, 
     sqlx::query_as!(
         PaymentRow,
         "select id, method, provider, status, amount_minor, currency, provider_ref,
-                khqr_payload, expires_at
+                khqr_payload, expires_at, description, request_hash
          from payments where id = $1 for update",
         id,
     )

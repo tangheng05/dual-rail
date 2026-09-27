@@ -78,26 +78,8 @@ async fn rejects_invalid_requests(pool: PgPool) {
 }
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
-async fn reused_idempotency_key_never_creates_a_second_intent(pool: PgPool) {
-    let app = TestApp::new(pool);
-
-    let (first, _) = app.create_card_payment("order-1", 1000).await;
-    let (second, _) = app.create_card_payment("order-1", 1000).await;
-
-    assert_eq!(first, StatusCode::CREATED);
-    assert_eq!(second, StatusCode::CONFLICT);
-    assert_eq!(app.cards.requests.lock().unwrap().len(), 1);
-}
-
-#[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn stripe_outage_returns_bad_gateway_and_leaves_payment_pending(pool: PgPool) {
-    let app = TestApp::with_cards(
-        pool.clone(),
-        FakeCards {
-            fail: true,
-            ..FakeCards::default()
-        },
-    );
+    let app = TestApp::with_cards(pool.clone(), FakeCards::failing());
 
     let (status, _) = app.create_card_payment("order-1", 1000).await;
 

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "select id, method, provider, status, amount_minor, currency, provider_ref,\n                khqr_payload, expires_at\n         from payments where id = $1 for update",
+  "query": "select id, method, provider, status, amount_minor, currency, provider_ref,\n                khqr_payload, expires_at, description, request_hash\n         from payments where id = $1",
   "describe": {
     "columns": [
       {
@@ -101,6 +101,28 @@
             "name": "expires_at"
           }
         }
+      },
+      {
+        "ordinal": 9,
+        "name": "description",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "payments",
+            "name": "description"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "request_hash",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "payments",
+            "name": "request_hash"
+          }
+        }
       }
     ],
     "parameters": {
@@ -117,8 +139,10 @@
       false,
       true,
       true,
+      true,
+      true,
       true
     ]
   },
-  "hash": "dc5c1ddacc01a5c42b1c2dd83b157364c02bbc19b8ec04aecb3ea51a4559b127"
+  "hash": "e6c4d91076acabf75f3ef5c2c401c49507670bd641bba1e266bf7d07dc1749f3"
 }

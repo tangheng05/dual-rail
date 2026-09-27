@@ -68,12 +68,12 @@ async fn creates_a_khqr_payment_with_a_scannable_qr(pool: PgPool) {
 }
 
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
-async fn rejects_fractional_riel_and_reused_keys(pool: PgPool) {
+async fn rejects_fractional_riel_and_keys_reused_for_a_different_request(pool: PgPool) {
     let app = TestApp::new(pool);
 
     let (fractional, _) = app.create_khqr_payment("order-1", 50_070, "KHR").await;
     new_khqr(&app, "order-2").await;
-    let (reused, _) = app.create_khqr_payment("order-2", 1000, "USD").await;
+    let (reused, _) = app.create_khqr_payment("order-2", 2000, "USD").await;
 
     assert_eq!(fractional, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(reused, StatusCode::CONFLICT);

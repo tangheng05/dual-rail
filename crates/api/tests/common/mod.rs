@@ -8,7 +8,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use async_trait::async_trait;
 use axum::Router;
 use axum::body::{Body, to_bytes};
-use axum::http::{Request, StatusCode};
+use axum::http::{HeaderMap, Request, StatusCode};
 use dual_rail_api::AppState;
 use dual_rail_rails::card::{
     CardGateway, CardGatewayError, CreatedPaymentIntent, PaymentIntentRequest,
@@ -27,8 +27,23 @@ pub const KHQR_ACCOUNT: &str = "dual_rail@devb";
 #[derive(Default)]
 pub struct FakeCards {
     pub requests: Mutex<Vec<PaymentIntentRequest>>,
-    pub fail: bool,
+    pub secret_lookups: AtomicUsize,
+    pub fail: AtomicBool,
     pub reject: bool,
+    pub in_progress: AtomicBool,
+}
+
+impl FakeCards {
+    pub fn failing() -> Self {
+        Self {
+            fail: AtomicBool::new(true),
+            ..Self::default()
+        }
+    }
+
+    pub fn creates(&self) -> usize {
+        self.requests.lock().unwrap().len()
+    }
 }
 
 #[async_trait]
@@ -39,7 +54,10 @@ impl CardGateway for FakeCards {
     ) -> Result<CreatedPaymentIntent, CardGatewayError> {
         let payment_id = request.payment_id;
         self.requests.lock().unwrap().push(request);
-        if self.fail {
+        if self.in_progress.load(Ordering::SeqCst) {
+            return Err(CardGatewayError::InProgress);
+        }
+        if self.fail.load(Ordering::SeqCst) {
             return Err(CardGatewayError::Provider("stripe is down".to_owned()));
         }
         if self.reject {
@@ -51,6 +69,14 @@ impl CardGateway for FakeCards {
             id: format!("pi_{}", payment_id.simple()),
             client_secret: format!("pi_{}_secret_test", payment_id.simple()),
         })
+    }
+
+    async fn client_secret(&self, payment_intent_id: &str) -> Result<String, CardGatewayError> {
+        self.secret_lookups.fetch_add(1, Ordering::SeqCst);
+        if self.fail.load(Ordering::SeqCst) {
+            return Err(CardGatewayError::Provider("stripe is down".to_owned()));
+        }
+        Ok(format!("{payment_intent_id}_secret_test"))
     }
 }
 
@@ -175,11 +201,17 @@ impl TestApp {
     }
 
     pub async fn send(&self, request: Request<Body>) -> (StatusCode, Value) {
+        let (status, _, body) = self.send_full(request).await;
+        (status, body)
+    }
+
+    pub async fn send_full(&self, request: Request<Body>) -> (StatusCode, HeaderMap, Value) {
         let response = self.router.clone().oneshot(request).await.unwrap();
         let status = response.status();
+        let headers = response.headers().clone();
         let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let body = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
-        (status, body)
+        (status, headers, body)
     }
 
     pub async fn create_card_payment(&self, key: &str, amount_minor: i64) -> (StatusCode, Value) {

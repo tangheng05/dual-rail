@@ -1,12 +1,14 @@
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
+use axum::response::{IntoResponse, Response};
 use dual_rail_core::{Currency, Money, Outcome, PaymentMethod, PaymentStatus, Provider};
 use dual_rail_rails::card::{CardGatewayError, PaymentIntentRequest};
 use dual_rail_rails::khqr::IssueError;
-use dual_rail_store::payments::{self, NewKhqrPayment, Payment};
+use dual_rail_store::payments::{self, NewKhqrPayment, NewPayment, Payment};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -70,36 +72,34 @@ pub async fn create(
     State(state): State<AppState>,
     headers: HeaderMap,
     payload: Result<Json<CreatePayment>, JsonRejection>,
-) -> Result<(StatusCode, Json<PaymentResponse>), ApiError> {
+) -> Result<Response, ApiError> {
     let idempotency_key = idempotency_key(&headers)?;
     let Json(body) = payload.map_err(|rejection| ApiError::Unprocessable(rejection.body_text()))?;
     let method: PaymentMethod = body.method.parse()?;
     let amount = Money::new(body.amount_minor, body.currency.parse()?)?;
-    if body
-        .description
-        .as_ref()
-        .is_some_and(|description| description.chars().count() > MAX_DESCRIPTION_LEN)
-    {
+    let description = body.description.as_deref();
+    if description.is_some_and(|description| description.chars().count() > MAX_DESCRIPTION_LEN) {
         return Err(ApiError::Unprocessable(format!(
             "description must be at most {MAX_DESCRIPTION_LEN} characters"
         )));
     }
 
-    let response = match method {
+    let request_hash = fingerprint(method, amount, description);
+    match method {
         PaymentMethod::Card => {
-            create_card(&state, idempotency_key, amount, body.description).await?
+            create_card(&state, idempotency_key, &request_hash, amount, description).await
         }
-        PaymentMethod::Khqr => create_khqr(&state, idempotency_key, amount).await?,
-    };
-    Ok((StatusCode::CREATED, Json(response)))
+        PaymentMethod::Khqr => create_khqr(&state, idempotency_key, &request_hash, amount).await,
+    }
 }
 
 async fn create_card(
     state: &AppState,
     idempotency_key: &str,
+    request_hash: &str,
     amount: Money,
-    description: Option<String>,
-) -> Result<PaymentResponse, ApiError> {
+    description: Option<&str>,
+) -> Result<Response, ApiError> {
     let method = PaymentMethod::Card;
     let provider = Provider::for_method(method);
     if amount.currency() == Currency::Usd && !STRIPE_USD_RANGE.contains(&amount.amount_minor()) {
@@ -107,39 +107,62 @@ async fn create_card(
             "card payments in USD must be between 50 and 99999999 minor units".to_owned(),
         ));
     }
-    let Some(payment_id) =
-        payments::insert_pending(&state.pool, method, provider, amount, idempotency_key).await?
-    else {
-        return Err(key_already_used());
+    let new_payment = NewPayment {
+        method,
+        provider,
+        amount,
+        idempotency_key,
+        request_hash,
+        description,
+    };
+    let Some(payment_id) = payments::insert_pending(&state.pool, &new_payment).await? else {
+        return replay(state, idempotency_key, request_hash).await;
     };
 
+    let client_secret = link_card_intent(state, payment_id, amount, description).await?;
+    Ok(created(
+        PaymentResponse {
+            client_secret: Some(client_secret),
+            ..pending_response(payment_id, method, provider, amount)
+        },
+        false,
+    ))
+}
+
+/// Creates (or, on a retry, re-fetches) the payment's Stripe intent and links it.
+/// The Stripe idempotency key is derived from the payment id and the parameters
+/// come from the stored request, so a retry can never open a second intent.
+async fn link_card_intent(
+    state: &AppState,
+    payment_id: Uuid,
+    amount: Money,
+    description: Option<&str>,
+) -> Result<String, ApiError> {
     let intent = state
         .cards
         .create_payment_intent(PaymentIntentRequest {
             payment_id,
             amount,
-            description,
+            description: description.map(str::to_owned),
         })
         .await;
-    let intent = match intent {
-        Ok(intent) => intent,
+    match intent {
+        Ok(intent) => {
+            payments::set_provider_ref(&state.pool, payment_id, &intent.id).await?;
+            tracing::info!(%payment_id, payment_intent = %intent.id, "card payment linked to stripe");
+            Ok(intent.client_secret)
+        }
         Err(CardGatewayError::Rejected(reason)) => {
             tracing::warn!(%payment_id, %reason, "stripe rejected payment intent");
             fail_rejected(state, payment_id).await?;
-            return Err(ApiError::Unprocessable(reason));
+            Err(ApiError::Unprocessable(reason))
         }
+        Err(CardGatewayError::InProgress) => Err(still_in_progress()),
         Err(err) => {
             tracing::error!(%payment_id, %err, "could not create stripe payment intent");
-            return Err(ApiError::BadGateway);
+            Err(ApiError::BadGateway)
         }
-    };
-    payments::set_provider_ref(&state.pool, payment_id, &intent.id).await?;
-    tracing::info!(%payment_id, payment_intent = %intent.id, "card payment created");
-
-    Ok(PaymentResponse {
-        client_secret: Some(intent.client_secret),
-        ..pending_response(payment_id, method, provider, amount)
-    })
+    }
 }
 
 /// A request Stripe refused can never be paid, so it must not sit pending.
@@ -155,8 +178,9 @@ async fn fail_rejected(state: &AppState, payment_id: Uuid) -> Result<(), ApiErro
 async fn create_khqr(
     state: &AppState,
     idempotency_key: &str,
+    request_hash: &str,
     amount: Money,
-) -> Result<PaymentResponse, ApiError> {
+) -> Result<Response, ApiError> {
     let method = PaymentMethod::Khqr;
     let payment_id = Uuid::new_v4();
     let created_at = OffsetDateTime::now_utc();
@@ -180,6 +204,7 @@ async fn create_khqr(
             id: payment_id,
             amount,
             idempotency_key,
+            request_hash,
             payload: &qr.payload,
             md5: &qr.md5,
             expires_at,
@@ -187,16 +212,78 @@ async fn create_khqr(
     )
     .await?;
     if !inserted {
-        return Err(key_already_used());
+        return replay(state, idempotency_key, request_hash).await;
     }
     tracing::info!(%payment_id, md5 = %qr.md5, "khqr payment created");
 
-    Ok(PaymentResponse {
-        qr: Some(qr.payload),
-        md5: Some(qr.md5),
-        expires_at: Some(expires_at),
-        ..pending_response(payment_id, method, Provider::for_method(method), amount)
-    })
+    Ok(created(
+        PaymentResponse {
+            qr: Some(qr.payload),
+            md5: Some(qr.md5),
+            expires_at: Some(expires_at),
+            ..pending_response(payment_id, method, Provider::for_method(method), amount)
+        },
+        false,
+    ))
+}
+
+/// Answers a repeated Idempotency-Key from the stored payment instead of creating
+/// a new one. A card payment still pending gets its client secret again, finishing
+/// the Stripe link first if the original request failed before it.
+async fn replay(
+    state: &AppState,
+    idempotency_key: &str,
+    request_hash: &str,
+) -> Result<Response, ApiError> {
+    let payment = payments::find_by_idempotency_key(&state.pool, idempotency_key)
+        .await?
+        .ok_or(ApiError::Internal)?;
+    if payment.request_hash.as_deref() != Some(request_hash) {
+        return Err(ApiError::Conflict(
+            "Idempotency-Key was already used with a different request".to_owned(),
+        ));
+    }
+
+    let is_card = payment.method == PaymentMethod::Card;
+    if is_card && payment.status == PaymentStatus::Failed && payment.provider_ref.is_none() {
+        let rejected =
+            ApiError::Unprocessable("the card provider rejected this payment".to_owned());
+        return Ok(with_replayed_header(rejected.into_response()));
+    }
+
+    let client_secret = if is_card && payment.status == PaymentStatus::Pending {
+        Some(match &payment.provider_ref {
+            Some(payment_intent) => state.cards.client_secret(payment_intent).await.map_err(
+                |err| match err {
+                    CardGatewayError::InProgress => still_in_progress(),
+                    err => {
+                        tracing::error!(payment_id = %payment.id, %err, "could not fetch stripe client secret");
+                        ApiError::BadGateway
+                    }
+                },
+            )?,
+            None => {
+                link_card_intent(
+                    state,
+                    payment.id,
+                    payment.amount,
+                    payment.description.as_deref(),
+                )
+                .await?
+            }
+        })
+    } else {
+        None
+    };
+
+    tracing::info!(payment_id = %payment.id, "idempotent replay");
+    Ok(created(
+        PaymentResponse {
+            client_secret,
+            ..payment.into()
+        },
+        true,
+    ))
 }
 
 pub async fn get(
@@ -229,8 +316,38 @@ fn pending_response(
     }
 }
 
-fn key_already_used() -> ApiError {
-    ApiError::Conflict("Idempotency-Key has already been used".to_owned())
+fn still_in_progress() -> ApiError {
+    ApiError::Conflict(
+        "a request with this Idempotency-Key is still in progress, retry shortly".to_owned(),
+    )
+}
+
+fn created(body: PaymentResponse, replayed: bool) -> Response {
+    let response = (StatusCode::CREATED, Json(body)).into_response();
+    if replayed {
+        with_replayed_header(response)
+    } else {
+        response
+    }
+}
+
+fn with_replayed_header(mut response: Response) -> Response {
+    response
+        .headers_mut()
+        .insert("idempotent-replayed", HeaderValue::from_static("true"));
+    response
+}
+
+/// Hashes the parsed request, so key order and whitespace in the JSON body do not
+/// make an identical request look different.
+fn fingerprint(method: PaymentMethod, amount: Money, description: Option<&str>) -> String {
+    let canonical = serde_json::json!([
+        method.as_str(),
+        amount.amount_minor(),
+        amount.currency().as_str(),
+        description,
+    ]);
+    hex::encode(Sha256::digest(canonical.to_string()))
 }
 
 fn unix_ms(at: OffsetDateTime) -> u64 {
