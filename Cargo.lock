@@ -520,6 +520,7 @@ version = "0.1.0"
 dependencies = [
  "async-stripe",
  "async-stripe-core",
+ "async-stripe-shared",
  "async-stripe-types",
  "async-trait",
  "dual-rail-core",

@@ -5,7 +5,8 @@ use dual_rail_core::{Currency, Money};
 use dual_rail_rails::card::StripeGateway;
 use dual_rail_rails::khqr::{BakongVerifier, KhqrIssuer};
 use khqr_api::{BakongClient, Environment};
-use time::OffsetDateTime;
+use time::macros::format_description;
+use time::{Date, OffsetDateTime};
 use tokio::net::TcpListener;
 use tokio::signal;
 use tokio_util::sync::CancellationToken;
@@ -18,8 +19,15 @@ async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
     tracing_subscriber::fmt()
         .json()
+        .with_writer(std::io::stderr)
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .init();
+
+    let manual_run_date = match std::env::args().nth(1).as_deref() {
+        None => None,
+        Some("reconcile") => Some(parse_run_date(std::env::args().nth(2))?),
+        Some(other) => anyhow::bail!("unknown command {other:?}; expected `reconcile YYYY-MM-DD`"),
+    };
 
     let config = Config::from_env()?;
     let khqr = KhqrIssuer::new(config.khqr_account);
@@ -55,10 +63,23 @@ async fn main() -> anyhow::Result<()> {
         khqr_ttl: config.khqr_ttl,
     };
 
+    if let Some(date) = manual_run_date {
+        let summary = dual_rail_api::reconcile(&state, date, config.reconciliation_offset)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("a reconciliation for {date} is already running"))?;
+        println!("{}", serde_json::to_string_pretty(&summary)?);
+        return Ok(());
+    }
+
     let shutdown = CancellationToken::new();
     let poller = tokio::spawn(dual_rail_api::run_khqr_poller(
         state.clone(),
         config.bakong_poll_interval,
+        shutdown.clone(),
+    ));
+    let reconciler = tokio::spawn(dual_rail_api::run_reconciliation_scheduler(
+        state.clone(),
+        config.reconciliation_offset,
         shutdown.clone(),
     ));
 
@@ -70,7 +91,14 @@ async fn main() -> anyhow::Result<()> {
 
     shutdown.cancel();
     poller.await?;
+    reconciler.await?;
     Ok(())
+}
+
+fn parse_run_date(arg: Option<String>) -> anyhow::Result<Date> {
+    let arg = arg.ok_or_else(|| anyhow::anyhow!("usage: dual-rail-api reconcile YYYY-MM-DD"))?;
+    Date::parse(&arg, format_description!("[year]-[month]-[day]"))
+        .map_err(|err| anyhow::anyhow!("invalid date {arg:?}: {err}"))
 }
 
 async fn shutdown_signal() {

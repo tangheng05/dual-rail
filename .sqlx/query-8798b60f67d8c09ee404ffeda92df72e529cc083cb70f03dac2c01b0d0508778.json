@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "update payments\n         set status = $2, provider_ref = coalesce(provider_ref, $3), next_check_at = null,\n             settled_at = now(), updated_at = now()\n         where id = $1 and status = 'pending'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8798b60f67d8c09ee404ffeda92df72e529cc083cb70f03dac2c01b0d0508778"
+}

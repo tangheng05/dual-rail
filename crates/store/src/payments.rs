@@ -180,6 +180,46 @@ pub async fn find_by_idempotency_key(
     .transpose()
 }
 
+/// Payments that reached `status` in `[from, to)`.
+pub async fn settled_between(
+    pool: &PgPool,
+    status: PaymentStatus,
+    from: OffsetDateTime,
+    to: OffsetDateTime,
+) -> Result<Vec<Payment>, sqlx::Error> {
+    sqlx::query_as!(
+        PaymentRow,
+        "select id, method, provider, status, amount_minor, currency, provider_ref,
+                khqr_payload, expires_at, description, request_hash
+         from payments
+         where status = $1 and settled_at >= $2 and settled_at < $3
+         order by settled_at",
+        status.as_str(),
+        from,
+        to,
+    )
+    .fetch_all(pool)
+    .await?
+    .into_iter()
+    .map(Payment::try_from)
+    .collect()
+}
+
+pub async fn find_many(pool: &PgPool, ids: &[Uuid]) -> Result<Vec<Payment>, sqlx::Error> {
+    sqlx::query_as!(
+        PaymentRow,
+        "select id, method, provider, status, amount_minor, currency, provider_ref,
+                khqr_payload, expires_at, description, request_hash
+         from payments where id = any($1)",
+        ids,
+    )
+    .fetch_all(pool)
+    .await?
+    .into_iter()
+    .map(Payment::try_from)
+    .collect()
+}
+
 pub async fn lock(conn: &mut PgConnection, id: Uuid) -> Result<Option<Payment>, sqlx::Error> {
     sqlx::query_as!(
         PaymentRow,
@@ -205,7 +245,7 @@ pub async fn transition(
     let result = sqlx::query!(
         "update payments
          set status = $2, provider_ref = coalesce(provider_ref, $3), next_check_at = null,
-             updated_at = now()
+             settled_at = now(), updated_at = now()
          where id = $1 and status = 'pending'",
         id,
         to.as_str(),

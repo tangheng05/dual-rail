@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select p.id from payments p\n         where p.status = 'succeeded' and p.settled_at >= $1 and p.settled_at < $2\n           and not exists (select 1 from journal_entries j where j.payment_id = p.id)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "payments",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "6b4f404c766d105d951ceff6933b746c36c6b51ba8640672b1dece8a264d817c"
+}

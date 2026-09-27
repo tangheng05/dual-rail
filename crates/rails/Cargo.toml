@@ -8,6 +8,7 @@ publish.workspace = true
 dual-rail-core.workspace = true
 async-stripe.workspace = true
 async-stripe-core.workspace = true
+async-stripe-shared.workspace = true
 async-stripe-types.workspace = true
 async-trait.workspace = true
 hex.workspace = true

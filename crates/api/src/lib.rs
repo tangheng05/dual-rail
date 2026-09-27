@@ -3,6 +3,7 @@ mod error;
 mod health;
 mod khqr_poller;
 mod payments;
+mod reconciliation;
 mod settlement;
 mod stripe_webhook;
 
@@ -17,6 +18,10 @@ use sqlx::PgPool;
 
 pub use config::{BakongEndpoint, Config};
 pub use khqr_poller::{poll_once, run as run_khqr_poller};
+pub use reconciliation::{
+    Mismatch, RunSummary, local_day_window, reconcile,
+    run_scheduler as run_reconciliation_scheduler,
+};
 
 #[derive(Clone)]
 pub struct AppState {

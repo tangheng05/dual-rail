@@ -11,7 +11,7 @@ use axum::body::{Body, to_bytes};
 use axum::http::{HeaderMap, Request, StatusCode};
 use dual_rail_api::AppState;
 use dual_rail_rails::card::{
-    CardGateway, CardGatewayError, CreatedPaymentIntent, PaymentIntentRequest,
+    CardGateway, CardGatewayError, CreatedPaymentIntent, IntentSnapshot, PaymentIntentRequest,
 };
 use dual_rail_rails::khqr::{
     KhqrIssuer, KhqrStatus, KhqrTransfer, KhqrVerifier, MerchantAccount, VerifierError,
@@ -31,6 +31,7 @@ pub struct FakeCards {
     pub fail: AtomicBool,
     pub reject: bool,
     pub in_progress: AtomicBool,
+    pub intents: Mutex<HashMap<String, IntentSnapshot>>,
 }
 
 impl FakeCards {
@@ -65,10 +66,50 @@ impl CardGateway for FakeCards {
                 "Amount must be no more than ៛999,999.99".to_owned(),
             ));
         }
+        let id = format!("pi_{}", payment_id.simple());
+        self.intents
+            .lock()
+            .unwrap()
+            .entry(id.clone())
+            .or_insert_with(|| IntentSnapshot {
+                id: id.clone(),
+                status: "requires_payment_method".to_owned(),
+                amount_received: 0,
+                currency: "usd".to_owned(),
+                payment_id: Some(payment_id.to_string()),
+            });
         Ok(CreatedPaymentIntent {
-            id: format!("pi_{}", payment_id.simple()),
-            client_secret: format!("pi_{}_secret_test", payment_id.simple()),
+            client_secret: format!("{id}_secret_test"),
+            id,
         })
+    }
+
+    async fn payment_intent(
+        &self,
+        payment_intent_id: &str,
+    ) -> Result<Option<IntentSnapshot>, CardGatewayError> {
+        if self.fail.load(Ordering::SeqCst) {
+            return Err(CardGatewayError::Provider("stripe is down".to_owned()));
+        }
+        Ok(self.intents.lock().unwrap().get(payment_intent_id).cloned())
+    }
+
+    async fn succeeded_intents(
+        &self,
+        _from_unix: i64,
+        _to_unix: i64,
+    ) -> Result<Vec<IntentSnapshot>, CardGatewayError> {
+        if self.fail.load(Ordering::SeqCst) {
+            return Err(CardGatewayError::Provider("stripe is down".to_owned()));
+        }
+        Ok(self
+            .intents
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|intent| intent.succeeded())
+            .cloned()
+            .collect())
     }
 
     async fn client_secret(&self, payment_intent_id: &str) -> Result<String, CardGatewayError> {
@@ -188,6 +229,38 @@ impl TestApp {
         .execute(&self.pool)
         .await
         .unwrap();
+    }
+
+    /// Marks the fake Stripe intent for `payment_id` as succeeded with `amount_received`.
+    pub fn stripe_succeeds(&self, payment_id: &str, amount_received: i64) {
+        let id = format!("pi_{}", payment_id.replace('-', ""));
+        let mut intents = self.cards.intents.lock().unwrap();
+        let intent = intents.get_mut(&id).expect("intent was created");
+        intent.status = "succeeded".to_owned();
+        intent.amount_received = amount_received;
+    }
+
+    pub async fn reconcile_today(&self) -> dual_rail_api::RunSummary {
+        let offset = time::macros::offset!(+7);
+        let today = time::OffsetDateTime::now_utc().to_offset(offset).date();
+        dual_rail_api::reconcile(&self.state, today, offset)
+            .await
+            .unwrap()
+            .expect("no other run in progress")
+    }
+
+    /// Everything reconciliation must never change.
+    pub async fn money_state(&self) -> Vec<(String, String, i64)> {
+        sqlx::query_as(
+            "select p.id::text, p.status, coalesce(sum(l.amount_minor), 0)::bigint
+             from payments p
+             left join journal_entries j on j.payment_id = p.id
+             left join ledger_lines l on l.journal_entry_id = j.id
+             group by p.id, p.status order by p.id",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .unwrap()
     }
 
     pub async fn review_flags_for(&self, payment_id: &str) -> Vec<String> {

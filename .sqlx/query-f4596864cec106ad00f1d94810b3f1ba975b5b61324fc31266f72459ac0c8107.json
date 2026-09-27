@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select exists (\n               select 1 from reconciliation_runs\n               where run_date = $1\n                 and (status = 'completed'\n                      or (status = 'incomplete' and finished_at > now() - interval '1 hour'))\n           ) as \"exists!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "exists!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Date"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "f4596864cec106ad00f1d94810b3f1ba975b5b61324fc31266f72459ac0c8107"
+}

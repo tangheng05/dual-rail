@@ -4,6 +4,10 @@ use std::time::Duration;
 
 use anyhow::{Context, bail};
 use dual_rail_rails::khqr::MerchantAccount;
+use time::UtcOffset;
+use time::macros::{format_description, offset};
+
+const CAMBODIA: UtcOffset = offset!(+7);
 
 pub struct Config {
     pub database_url: String,
@@ -16,6 +20,7 @@ pub struct Config {
     pub bakong_endpoint: BakongEndpoint,
     pub bakong_renewal_email: Option<String>,
     pub bakong_poll_interval: Duration,
+    pub reconciliation_offset: UtcOffset,
 }
 
 pub enum BakongEndpoint {
@@ -42,6 +47,14 @@ impl Config {
         if poll_interval_secs == 0 {
             bail!("BAKONG_POLL_INTERVAL_SECS must be at least 1");
         }
+        let reconciliation_offset = match optional("RECONCILIATION_UTC_OFFSET") {
+            Some(offset) => UtcOffset::parse(
+                &offset,
+                format_description!("[offset_hour sign:mandatory]:[offset_minute]"),
+            )
+            .context("RECONCILIATION_UTC_OFFSET must look like +07:00")?,
+            None => CAMBODIA,
+        };
         let bakong_endpoint = match (optional("BAKONG_BASE_URL"), optional("BAKONG_ENV")) {
             (Some(url), _) => BakongEndpoint::Relay(url),
             (None, Some(env)) if env == "sandbox" => BakongEndpoint::Sandbox,
@@ -66,6 +79,7 @@ impl Config {
             bakong_endpoint,
             bakong_renewal_email: optional("BAKONG_RENEWAL_EMAIL"),
             bakong_poll_interval: Duration::from_secs(poll_interval_secs),
+            reconciliation_offset,
         })
     }
 }
