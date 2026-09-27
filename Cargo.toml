@@ -7,6 +7,7 @@ edition = "2024"
 publish = false
 
 [workspace.dependencies]
+dual-rail-core = { path = "crates/core" }
 dual-rail-store = { path = "crates/store" }
 
 anyhow = "1.0.104"
@@ -14,6 +15,7 @@ axum = "0.8.9"
 dotenvy = "0.15.7"
 serde_json = "1.0.151"
 sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-webpki", "postgres", "macros", "migrate"] }
+thiserror = "2.0.21"
 tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "signal"] }
 tower = { version = "0.5.3", features = ["util"] }
 tracing = "0.1.44"

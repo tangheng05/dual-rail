@@ -305,6 +305,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "dual-rail-core"
+version = "0.1.0"
+dependencies = [
+ "thiserror",
+]
+
+[[package]]
 name = "dual-rail-store"
 version = "0.1.0"
 dependencies = [
