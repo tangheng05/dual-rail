@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="stripe-key" content="__STRIPE_PUBLISHABLE_KEY__">
+  <title>dual-rail checkout</title>
+  <style>
+    :root {
+      --bg: #f6f5f1;
+      --panel: #ffffff;
+      --ink: #1d1d1b;
+      --muted: #6b6a64;
+      --line: #e3e1da;
+      --accent: #0f5c4d;
+      --accent-ink: #ffffff;
+      --ok: #1b7a3d;
+      --warn: #9a5b00;
+      --bad: #b3261e;
+      --radius: 14px;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #121312;
+        --panel: #1b1c1b;
+        --ink: #eceae4;
+        --muted: #9d9b94;
+        --line: #2e2f2d;
+        --accent: #5cc9a7;
+        --accent-ink: #0b1f19;
+        --ok: #6fd28f;
+        --warn: #f0b35a;
+        --bad: #ff8a80;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--ink);
+      font: 16px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      display: flex;
+      justify-content: center;
+      padding: 40px 16px;
+    }
+    main { width: 100%; max-width: 440px; }
+    header h1 { font-size: 1.35rem; margin: 0 0 4px; letter-spacing: -0.01em; }
+    header p { margin: 0 0 24px; color: var(--muted); font-size: 0.95rem; }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 20px;
+    }
+    fieldset { border: 0; margin: 0 0 18px; padding: 0; }
+    legend, label.field { display: block; font-size: 0.85rem; color: var(--muted); margin-bottom: 6px; }
+    .methods { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .methods input { position: absolute; opacity: 0; pointer-events: none; }
+    .methods label {
+      display: block;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    .methods label small { display: block; font-weight: 400; color: var(--muted); font-size: 0.8rem; }
+    .methods input:checked + label { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+    .methods input:disabled + label { opacity: 0.5; cursor: not-allowed; }
+    .methods input:focus-visible + label { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .row { display: grid; grid-template-columns: 1fr 96px; gap: 8px; margin-bottom: 18px; }
+    input[type="text"], select {
+      width: 100%;
+      padding: 11px 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: transparent;
+      color: var(--ink);
+      font: inherit;
+    }
+    input[type="text"]:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+    button {
+      width: 100%;
+      padding: 12px;
+      border: 0;
+      border-radius: 10px;
+      background: var(--accent);
+      color: var(--accent-ink);
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:disabled { opacity: 0.6; cursor: progress; }
+    button.secondary { background: transparent; color: var(--ink); border: 1px solid var(--line); margin-top: 10px; }
+    .hint { color: var(--muted); font-size: 0.85rem; margin: 10px 0 0; }
+    .error { color: var(--bad); font-size: 0.9rem; margin: 12px 0 0; }
+    .hidden { display: none !important; }
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 600;
+      margin-bottom: 14px;
+    }
+    .status::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--warn); }
+    .status[data-state="succeeded"]::before { background: var(--ok); }
+    .status[data-state="failed"]::before, .status[data-state="expired"]::before { background: var(--bad); }
+    .amount { font-size: 1.6rem; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 14px; }
+    .qr { background: #fff; border-radius: 12px; padding: 14px; display: flex; justify-content: center; }
+    .qr img { width: 100%; max-width: 260px; height: auto; image-rendering: pixelated; }
+    .meta { display: flex; justify-content: space-between; color: var(--muted); font-size: 0.85rem; margin-top: 10px; }
+    code { font-size: 0.85em; }
+    #card-element { margin-bottom: 14px; }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>dual-rail checkout</h1>
+    <p>One API for international cards (Stripe) and Cambodian bank apps (Bakong KHQR).</p>
+  </header>
+
+  <form id="checkout" class="panel" novalidate>
+    <fieldset>
+      <legend>Pay with</legend>
+      <div class="methods">
+        <input type="radio" name="method" id="method-khqr" value="khqr" checked>
+        <label for="method-khqr">KHQR<small>Any Bakong bank app</small></label>
+        <input type="radio" name="method" id="method-card" value="card">
+        <label for="method-card">Card<small id="card-note">Visa, Mastercard…</small></label>
+      </div>
+    </fieldset>
+
+    <label class="field" for="amount">Amount</label>
+    <div class="row">
+      <input type="text" id="amount" inputmode="decimal" autocomplete="off" value="1.00" required>
+      <select id="currency" aria-label="Currency">
+        <option value="USD">USD</option>
+        <option value="KHR">KHR</option>
+      </select>
+    </div>
+
+    <label class="field" for="description">Description</label>
+    <div class="row" style="grid-template-columns: 1fr">
+      <input type="text" id="description" maxlength="200" value="Demo order">
+    </div>
+
+    <button type="submit" id="submit">Continue</button>
+    <p class="error hidden" id="form-error" role="alert"></p>
+  </form>
+
+  <section id="payment" class="panel hidden" aria-live="polite">
+    <div class="status" id="status" data-state="pending">Waiting for payment</div>
+    <p class="amount" id="payment-amount"></p>
+
+    <div id="khqr-view" class="hidden">
+      <div class="qr"><img id="qr" alt="KHQR code to scan with a Bakong bank app"></div>
+      <div class="meta"><span id="countdown"></span><span>Scan with any KHQR app</span></div>
+    </div>
+
+    <div id="card-view" class="hidden">
+      <div id="card-element"></div>
+      <button type="button" id="pay-card">Pay</button>
+      <p class="hint">Test mode: card <code>4242 4242 4242 4242</code>, any future date, any CVC.</p>
+    </div>
+
+    <p class="error hidden" id="payment-error" role="alert"></p>
+    <button type="button" class="secondary" id="restart">New payment</button>
+  </section>
+</main>
+
+<script>
+(() => {
+  const stripeKey = document.querySelector('meta[name="stripe-key"]').content;
+  const hasStripe = stripeKey.startsWith("pk_");
+  const $ = (id) => document.getElementById(id);
+  const TERMINAL = new Set(["succeeded", "failed", "expired"]);
+  const LABELS = {
+    pending: "Waiting for payment",
+    succeeded: "Paid",
+    failed: "Payment failed",
+    expired: "QR expired",
+  };
+
+  let attempt = null;
+  let pollTimer = null;
+  let countdownTimer = null;
+  let stripe = null;
+  let elements = null;
+
+  if (!hasStripe) {
+    $("method-card").disabled = true;
+    $("card-note").textContent = "Set STRIPE_PUBLISHABLE_KEY to enable";
+  }
+
+  function newKey() {
+    if (crypto.randomUUID) return crypto.randomUUID();
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  }
+
+  // Integer parsing only: money never passes through a float.
+  function toMinorUnits(text, currency) {
+    const value = text.trim().replace(/,/g, "");
+    if (currency === "KHR") {
+      if (!/^\d{1,11}$/.test(value)) return null;
+      return Number(value) * 100;
+    }
+    const match = /^(\d{1,9})(?:\.(\d{1,2}))?$/.exec(value);
+    if (!match) return null;
+    return Number(match[1]) * 100 + Number((match[2] || "").padEnd(2, "0"));
+  }
+
+  function formatAmount(minor, currency) {
+    if (currency === "KHR") return `${(minor / 100).toLocaleString()} ៛`;
+    return `$${Math.floor(minor / 100).toLocaleString()}.${String(minor % 100).padStart(2, "0")}`;
+  }
+
+  function showError(id, message) {
+    $(id).textContent = message;
+    $(id).classList.toggle("hidden", !message);
+  }
+
+  function setStatus(state) {
+    $("status").dataset.state = state;
+    $("status").textContent = LABELS[state] || state;
+  }
+
+  async function api(path, options = {}) {
+    const response = await fetch(path, options);
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(body.error || `Request failed (${response.status})`);
+    }
+    return body;
+  }
+
+  $("checkout").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    showError("form-error", "");
+    const method = document.querySelector('input[name="method"]:checked').value;
+    const currency = $("currency").value;
+    const amountMinor = toMinorUnits($("amount").value, currency);
+    if (amountMinor === null || amountMinor <= 0) {
+      showError("form-error", currency === "KHR"
+        ? "Enter a whole number of riel."
+        : "Enter an amount like 12.50.");
+      return;
+    }
+    const body = JSON.stringify({
+      method,
+      amount_minor: amountMinor,
+      currency,
+      description: $("description").value.trim() || undefined,
+    });
+
+    // Retrying the same request reuses its key, so a timeout can never create a
+    // second payment; any change to the request starts a new one.
+    if (!attempt || attempt.body !== body) attempt = { body, key: newKey() };
+
+    $("submit").disabled = true;
+    try {
+      const payment = await api("/payments", {
+        method: "POST",
+        headers: { "content-type": "application/json", "idempotency-key": attempt.key },
+        body,
+      });
+      showPayment(payment);
+    } catch (error) {
+      showError("form-error", `${error.message} You can safely try again.`);
+    } finally {
+      $("submit").disabled = false;
+    }
+  });
+
+  function showPayment(payment) {
+    $("checkout").classList.add("hidden");
+    $("payment").classList.remove("hidden");
+    $("payment-amount").textContent = formatAmount(payment.amount_minor, payment.currency);
+    showError("payment-error", "");
+    setStatus(payment.status);
+
+    if (payment.method === "khqr") {
+      $("khqr-view").classList.remove("hidden");
+      $("qr").src = `/payments/${encodeURIComponent(payment.id)}/qr.svg`;
+      startCountdown(new Date(payment.expires_at));
+    } else if (payment.status === "pending" && payment.client_secret) {
+      mountCard(payment.client_secret);
+    }
+    if (!TERMINAL.has(payment.status)) poll(payment.id);
+  }
+
+  function startCountdown(expiresAt) {
+    const tick = () => {
+      const seconds = Math.max(0, Math.round((expiresAt - Date.now()) / 1000));
+      $("countdown").textContent = seconds > 0
+        ? `Expires in ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`
+        : "Expired, confirming with Bakong…";
+    };
+    tick();
+    countdownTimer = setInterval(tick, 1000);
+  }
+
+  function poll(id) {
+    pollTimer = setInterval(async () => {
+      try {
+        const payment = await api(`/payments/${encodeURIComponent(id)}`);
+        setStatus(payment.status);
+        if (TERMINAL.has(payment.status)) {
+          stopTimers();
+          $("khqr-view").classList.toggle("hidden", payment.status !== "pending");
+          $("card-view").classList.add("hidden");
+        }
+      } catch (_) {
+        // Keep polling through a blip; the payment's state lives on the server.
+      }
+    }, 2000);
+  }
+
+  function loadStripe() {
+    if (window.Stripe) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = "https://js.stripe.com/v3/";
+      script.onload = resolve;
+      script.onerror = () => reject(new Error("Could not load Stripe.js"));
+      document.head.appendChild(script);
+    });
+  }
+
+  async function mountCard(clientSecret) {
+    $("card-view").classList.remove("hidden");
+    try {
+      await loadStripe();
+      stripe = stripe || window.Stripe(stripeKey);
+      const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+      elements = stripe.elements({ clientSecret, appearance: { theme: dark ? "night" : "stripe" } });
+      elements.create("payment").mount("#card-element");
+    } catch (error) {
+      showError("payment-error", error.message);
+    }
+  }
+
+  $("pay-card").addEventListener("click", async () => {
+    if (!stripe || !elements) return;
+    $("pay-card").disabled = true;
+    showError("payment-error", "");
+    const { error } = await stripe.confirmPayment({
+      elements,
+      redirect: "if_required",
+      confirmParams: { return_url: location.href },
+    });
+    $("pay-card").disabled = false;
+    if (error) {
+      // The payment stays pending at our end, so the customer can simply retry.
+      showError("payment-error", error.message);
+    } else {
+      $("card-view").classList.add("hidden");
+      $("status").textContent = "Confirming…";
+    }
+  });
+
+  function stopTimers() {
+    clearInterval(pollTimer);
+    clearInterval(countdownTimer);
+    pollTimer = countdownTimer = null;
+  }
+
+  $("restart").addEventListener("click", () => {
+    stopTimers();
+    attempt = null;
+    elements = null;
+    $("card-element").replaceChildren();
+    $("qr").removeAttribute("src");
+    $("khqr-view").classList.add("hidden");
+    $("card-view").classList.add("hidden");
+    $("payment").classList.add("hidden");
+    $("checkout").classList.remove("hidden");
+  });
+})();
+</script>
+</body>
+</html>

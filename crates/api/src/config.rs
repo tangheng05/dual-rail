@@ -14,6 +14,7 @@ pub struct Config {
     pub bind_addr: SocketAddr,
     pub stripe_secret_key: String,
     pub stripe_webhook_secret: String,
+    pub stripe_publishable_key: Option<String>,
     pub khqr_account: MerchantAccount,
     pub khqr_ttl: Duration,
     pub bakong_token: String,
@@ -55,6 +56,14 @@ impl Config {
             .context("RECONCILIATION_UTC_OFFSET must look like +07:00")?,
             None => CAMBODIA,
         };
+        let stripe_publishable_key = optional("STRIPE_PUBLISHABLE_KEY");
+        // It is written into the demo page's HTML, so only a key's own characters pass.
+        if let Some(key) = &stripe_publishable_key
+            && !(key.starts_with("pk_")
+                && key.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'))
+        {
+            bail!("STRIPE_PUBLISHABLE_KEY must look like pk_test_...");
+        }
         let bakong_endpoint = match (optional("BAKONG_BASE_URL"), optional("BAKONG_ENV")) {
             (Some(url), _) => BakongEndpoint::Relay(url),
             (None, Some(env)) if env == "sandbox" => BakongEndpoint::Sandbox,
@@ -67,6 +76,7 @@ impl Config {
             bind_addr,
             stripe_secret_key: required("STRIPE_SECRET_KEY")?,
             stripe_webhook_secret: required("STRIPE_WEBHOOK_SECRET")?,
+            stripe_publishable_key,
             khqr_account: MerchantAccount {
                 account_id: required("KHQR_ACCOUNT_ID")?,
                 merchant_name: required("KHQR_MERCHANT_NAME")?,

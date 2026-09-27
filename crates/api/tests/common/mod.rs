@@ -167,6 +167,7 @@ impl TestApp {
             pool: pool.clone(),
             cards: cards.clone(),
             stripe_webhook_secret: WEBHOOK_SECRET.into(),
+            stripe_publishable_key: Some("pk_test_demo".into()),
             khqr: Arc::new(KhqrIssuer::new(MerchantAccount {
                 account_id: KHQR_ACCOUNT.to_owned(),
                 merchant_name: "Dual Rail".to_owned(),
@@ -276,6 +277,14 @@ impl TestApp {
     pub async fn send(&self, request: Request<Body>) -> (StatusCode, Value) {
         let (status, _, body) = self.send_full(request).await;
         (status, body)
+    }
+
+    pub async fn send_raw(&self, request: Request<Body>) -> (StatusCode, HeaderMap, String) {
+        let response = self.router.clone().oneshot(request).await.unwrap();
+        let status = response.status();
+        let headers = response.headers().clone();
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        (status, headers, String::from_utf8(bytes.to_vec()).unwrap())
     }
 
     pub async fn send_full(&self, request: Request<Body>) -> (StatusCode, HeaderMap, Value) {

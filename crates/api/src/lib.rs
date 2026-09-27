@@ -1,4 +1,5 @@
 mod config;
+mod demo;
 mod error;
 mod health;
 mod khqr_poller;
@@ -28,6 +29,7 @@ pub struct AppState {
     pub pool: PgPool,
     pub cards: Arc<dyn CardGateway>,
     pub stripe_webhook_secret: Arc<str>,
+    pub stripe_publishable_key: Option<Arc<str>>,
     pub khqr: Arc<KhqrIssuer>,
     pub verifier: Arc<dyn KhqrVerifier>,
     pub khqr_ttl: Duration,
@@ -41,9 +43,11 @@ pub fn install_crypto_provider() {
 
 pub fn app(state: AppState) -> Router {
     Router::new()
+        .route("/", get(demo::page))
         .route("/health", get(health::health))
         .route("/payments", post(payments::create))
         .route("/payments/{id}", get(payments::get))
+        .route("/payments/{id}/qr.svg", get(payments::qr_svg))
         .route("/webhooks/stripe", post(stripe_webhook::receive))
         .with_state(state)
 }

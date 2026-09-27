@@ -58,6 +58,7 @@ async fn main() -> anyhow::Result<()> {
         pool,
         cards: Arc::new(StripeGateway::new(&config.stripe_secret_key)?),
         stripe_webhook_secret: config.stripe_webhook_secret.into(),
+        stripe_publishable_key: config.stripe_publishable_key.map(Into::into),
         khqr: Arc::new(khqr),
         verifier: Arc::new(BakongVerifier::new(bakong)),
         khqr_ttl: config.khqr_ttl,

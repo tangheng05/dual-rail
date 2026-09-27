@@ -1,7 +1,7 @@
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, HeaderValue, StatusCode};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use dual_rail_core::{Currency, Money, Outcome, PaymentMethod, PaymentStatus, Provider};
 use dual_rail_rails::card::{CardGatewayError, PaymentIntentRequest};
@@ -294,6 +294,28 @@ pub async fn get(
         .await?
         .ok_or(ApiError::NotFound)?;
     Ok(Json(payment.into()))
+}
+
+pub async fn qr_svg(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Response, ApiError> {
+    let payload = payments::find(&state.pool, id)
+        .await?
+        .and_then(|payment| payment.khqr_payload)
+        .ok_or(ApiError::NotFound)?;
+    let svg = khqr_core::to_svg(&payload).map_err(|err| {
+        tracing::error!(payment_id = %id, %err, "could not render khqr");
+        ApiError::Internal
+    })?;
+    Ok((
+        [
+            (header::CONTENT_TYPE, "image/svg+xml"),
+            (header::CACHE_CONTROL, "private, max-age=600"),
+        ],
+        svg,
+    )
+        .into_response())
 }
 
 fn pending_response(

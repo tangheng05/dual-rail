@@ -13,6 +13,7 @@ axum.workspace = true
 dotenvy.workspace = true
 hex.workspace = true
 khqr-api.workspace = true
+khqr-core = { workspace = true, features = ["image"] }
 rustls.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -27,5 +28,4 @@ uuid.workspace = true
 
 [dev-dependencies]
 async-trait.workspace = true
-khqr-core.workspace = true
 tower.workspace = true
