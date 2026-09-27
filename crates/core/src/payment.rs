@@ -1,10 +1,17 @@
 use thiserror::Error;
 
+use crate::code::string_codes;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PaymentMethod {
     Card,
     Khqr,
 }
+
+string_codes!(PaymentMethod, "payment method", {
+    PaymentMethod::Card => "card",
+    PaymentMethod::Khqr => "khqr",
+});
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PaymentStatus {
@@ -13,6 +20,13 @@ pub enum PaymentStatus {
     Failed,
     Expired,
 }
+
+string_codes!(PaymentStatus, "payment status", {
+    PaymentStatus::Pending => "pending",
+    PaymentStatus::Succeeded => "succeeded",
+    PaymentStatus::Failed => "failed",
+    PaymentStatus::Expired => "expired",
+});
 
 /// The only statuses a payment can move to. `Pending` is not an outcome, so a
 /// transition back to it cannot be written.
@@ -63,6 +77,22 @@ mod tests {
                 Ok(outcome.into())
             );
         }
+    }
+
+    #[test]
+    fn codes_round_trip() {
+        for status in [
+            PaymentStatus::Pending,
+            PaymentStatus::Succeeded,
+            PaymentStatus::Failed,
+            PaymentStatus::Expired,
+        ] {
+            assert_eq!(status.as_str().parse(), Ok(status));
+        }
+        for method in [PaymentMethod::Card, PaymentMethod::Khqr] {
+            assert_eq!(method.as_str().parse(), Ok(method));
+        }
+        assert!("paid".parse::<PaymentStatus>().is_err());
     }
 
     #[test]

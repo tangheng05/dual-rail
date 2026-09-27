@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use thiserror::Error;
 
+use crate::code::string_codes;
 use crate::{Currency, Money, PaymentMethod};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -26,6 +27,11 @@ pub enum Direction {
     Debit,
     Credit,
 }
+
+string_codes!(Direction, "ledger direction", {
+    Direction::Debit => "debit",
+    Direction::Credit => "credit",
+});
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LedgerLine {

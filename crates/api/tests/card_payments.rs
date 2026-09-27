@@ -1,0 +1,132 @@
+mod common;
+
+use axum::body::Body;
+use axum::http::{Request, StatusCode};
+use common::{FakeCards, TestApp, create_payment_request};
+use serde_json::json;
+use sqlx::PgPool;
+
+#[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
+async fn creates_a_pending_card_payment_with_a_stripe_intent(pool: PgPool) {
+    let app = TestApp::new(pool);
+
+    let (status, body) = app
+        .send(create_payment_request(
+            Some("order-1"),
+            json!({ "method": "card", "amount_minor": 1000, "currency": "USD", "description": "Demo order #1" }),
+        ))
+        .await;
+
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(body["status"], "pending");
+    assert_eq!(body["amount_minor"], 1000);
+    assert_eq!(body["currency"], "USD");
+    let id = body["id"].as_str().unwrap();
+    assert!(body["client_secret"].as_str().unwrap().contains("_secret_"));
+
+    let requests = app.cards.requests.lock().unwrap().clone();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].payment_id.to_string(), id);
+    assert_eq!(requests[0].description.as_deref(), Some("Demo order #1"));
+
+    let (status, fetched) = app
+        .send(
+            Request::get(format!("/payments/{id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(fetched["status"], "pending");
+    assert!(fetched.get("client_secret").is_none());
+}
+
+#[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
+async fn rejects_invalid_requests(pool: PgPool) {
+    let app = TestApp::new(pool);
+    let valid = json!({ "method": "card", "amount_minor": 1000, "currency": "USD" });
+
+    let cases = [
+        (None, valid.clone(), StatusCode::BAD_REQUEST),
+        (Some(""), valid.clone(), StatusCode::BAD_REQUEST),
+        (
+            Some("k"),
+            json!({ "method": "card", "amount_minor": 0, "currency": "USD" }),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        ),
+        (
+            Some("k"),
+            json!({ "method": "card", "amount_minor": 1.5, "currency": "USD" }),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        ),
+        (
+            Some("k"),
+            json!({ "method": "card", "amount_minor": 1000, "currency": "EUR" }),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        ),
+        (
+            Some("k"),
+            json!({ "method": "cash", "amount_minor": 1000, "currency": "USD" }),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        ),
+        (
+            Some("k"),
+            json!({ "method": "khqr", "amount_minor": 1000, "currency": "USD" }),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        ),
+    ];
+    for (key, body, expected) in cases {
+        let (status, _) = app.send(create_payment_request(key, body.clone())).await;
+        assert_eq!(status, expected, "{key:?} {body}");
+    }
+    assert!(app.cards.requests.lock().unwrap().is_empty());
+}
+
+#[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
+async fn reused_idempotency_key_never_creates_a_second_intent(pool: PgPool) {
+    let app = TestApp::new(pool);
+
+    let (first, _) = app.create_card_payment("order-1", 1000).await;
+    let (second, _) = app.create_card_payment("order-1", 1000).await;
+
+    assert_eq!(first, StatusCode::CREATED);
+    assert_eq!(second, StatusCode::CONFLICT);
+    assert_eq!(app.cards.requests.lock().unwrap().len(), 1);
+}
+
+#[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
+async fn stripe_outage_returns_bad_gateway_and_leaves_payment_pending(pool: PgPool) {
+    let app = TestApp::with_cards(
+        pool.clone(),
+        FakeCards {
+            fail: true,
+            ..FakeCards::default()
+        },
+    );
+
+    let (status, _) = app.create_card_payment("order-1", 1000).await;
+
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    let (status, provider_ref): (String, Option<String>) =
+        sqlx::query_as("select status, provider_ref from payments")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(status, "pending");
+    assert_eq!(provider_ref, None);
+}
+
+#[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
+async fn unknown_payment_is_not_found(pool: PgPool) {
+    let app = TestApp::new(pool);
+
+    let (status, _) = app
+        .send(
+            Request::get("/payments/00000000-0000-0000-0000-000000000000")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}

@@ -1,10 +1,17 @@
 use thiserror::Error;
 
+use crate::code::string_codes;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Currency {
     Usd,
     Khr,
 }
+
+string_codes!(Currency, "currency", {
+    Currency::Usd => "USD",
+    Currency::Khr => "KHR",
+});
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Money {

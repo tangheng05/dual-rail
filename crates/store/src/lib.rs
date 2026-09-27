@@ -1,3 +1,7 @@
+pub mod events;
+pub mod ledger;
+pub mod payments;
+
 use std::time::Duration;
 
 use sqlx::PgPool;
@@ -17,4 +21,8 @@ pub async fn connect(database_url: &str) -> Result<PgPool, sqlx::Error> {
 pub async fn ping(pool: &PgPool) -> Result<(), sqlx::Error> {
     sqlx::query("select 1").execute(pool).await?;
     Ok(())
+}
+
+fn decode_error(err: impl std::error::Error + Send + Sync + 'static) -> sqlx::Error {
+    sqlx::Error::Decode(Box::new(err))
 }

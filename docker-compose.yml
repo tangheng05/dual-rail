@@ -17,6 +17,9 @@ services:
 
   app:
     build: .
+    env_file:
+      - path: .env
+        required: false
     environment:
       DATABASE_URL: postgres://dual_rail:dual_rail@postgres:5432/dual_rail
       RUST_LOG: info

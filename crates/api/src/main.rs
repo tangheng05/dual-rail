@@ -1,4 +1,7 @@
-use dual_rail_api::Config;
+use std::sync::Arc;
+
+use dual_rail_api::{AppState, Config};
+use dual_rail_rails::card::StripeGateway;
 use tokio::net::TcpListener;
 use tokio::signal;
 use tracing_subscriber::EnvFilter;
@@ -14,10 +17,15 @@ async fn main() -> anyhow::Result<()> {
     let config = Config::from_env()?;
     let pool = dual_rail_store::connect(&config.database_url).await?;
     dual_rail_store::MIGRATOR.run(&pool).await?;
+    let state = AppState {
+        pool,
+        cards: Arc::new(StripeGateway::new(&config.stripe_secret_key)?),
+        stripe_webhook_secret: config.stripe_webhook_secret.into(),
+    };
 
     let listener = TcpListener::bind(config.bind_addr).await?;
     tracing::info!(addr = %config.bind_addr, "listening");
-    axum::serve(listener, dual_rail_api::app(pool))
+    axum::serve(listener, dual_rail_api::app(state))
         .with_graceful_shutdown(shutdown_signal())
         .await?;
 

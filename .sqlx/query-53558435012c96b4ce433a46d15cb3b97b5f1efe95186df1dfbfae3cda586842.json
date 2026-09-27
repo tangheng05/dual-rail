@@ -1,0 +1,88 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select id, method, status, amount_minor, currency, provider_ref\n         from payments where id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "payments",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "method",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "payments",
+            "name": "method"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "status",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "payments",
+            "name": "status"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "amount_minor",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payments",
+            "name": "amount_minor"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "currency",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "payments",
+            "name": "currency"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "provider_ref",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "payments",
+            "name": "provider_ref"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "53558435012c96b4ce433a46d15cb3b97b5f1efe95186df1dfbfae3cda586842"
+}

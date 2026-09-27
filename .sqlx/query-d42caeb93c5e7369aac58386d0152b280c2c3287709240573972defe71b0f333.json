@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "update payments set provider_ref = $2, updated_at = now()\n         where id = $1 and provider_ref is null",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d42caeb93c5e7369aac58386d0152b280c2c3287709240573972defe71b0f333"
+}
