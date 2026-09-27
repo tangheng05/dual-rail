@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use thiserror::Error;
 
 use crate::code::string_codes;
-use crate::{Currency, Money, PaymentMethod};
+use crate::{Currency, Money, Provider};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Account {
@@ -90,10 +90,10 @@ impl JournalEntry {
         Ok(Self { lines })
     }
 
-    pub fn for_successful_payment(method: PaymentMethod, amount: Money) -> Self {
-        let clearing = match method {
-            PaymentMethod::Card => Account::ClearingStripe,
-            PaymentMethod::Khqr => Account::ClearingBakong,
+    pub fn for_successful_payment(provider: Provider, amount: Money) -> Self {
+        let clearing = match provider {
+            Provider::Stripe => Account::ClearingStripe,
+            Provider::Bakong => Account::ClearingBakong,
         };
         Self {
             lines: vec![
@@ -135,11 +135,11 @@ mod tests {
 
     #[test]
     fn successful_payment_entries_always_balance() {
-        for method in [PaymentMethod::Card, PaymentMethod::Khqr] {
+        for provider in [Provider::Stripe, Provider::Bakong] {
             for currency in [Currency::Usd, Currency::Khr] {
                 for amount_minor in [1, 1000, i64::MAX] {
                     let amount = Money::new(amount_minor, currency).unwrap();
-                    let entry = JournalEntry::for_successful_payment(method, amount);
+                    let entry = JournalEntry::for_successful_payment(provider, amount);
                     assert_eq!(JournalEntry::new(entry.lines().to_vec()), Ok(entry));
                 }
             }
@@ -147,13 +147,13 @@ mod tests {
     }
 
     #[test]
-    fn successful_payment_debits_the_rail_clearing_account() {
+    fn successful_payment_debits_the_provider_clearing_account() {
         let amount = Money::new(1000, Currency::Usd).unwrap();
-        for (method, clearing) in [
-            (PaymentMethod::Card, Account::ClearingStripe),
-            (PaymentMethod::Khqr, Account::ClearingBakong),
+        for (provider, clearing) in [
+            (Provider::Stripe, Account::ClearingStripe),
+            (Provider::Bakong, Account::ClearingBakong),
         ] {
-            let entry = JournalEntry::for_successful_payment(method, amount);
+            let entry = JournalEntry::for_successful_payment(provider, amount);
             assert_eq!(
                 entry.lines(),
                 [

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "update payments\n         set next_check_at = case\n                 when now() < expires_at then least(now() + $2 * interval '1 second', expires_at)\n                 else now() + $2 * interval '1 second'\n             end,\n             check_attempts = check_attempts + 1\n         where id = $1 and status = 'pending'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Float8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "41261cc9694e400b5dffbad1e2559d79f374322f8d3e4a902ff6ef0c320d32a7"
+}

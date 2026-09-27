@@ -1,7 +1,9 @@
 #![allow(dead_code)]
 
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use axum::Router;
@@ -11,17 +13,22 @@ use dual_rail_api::AppState;
 use dual_rail_rails::card::{
     CardGateway, CardGatewayError, CreatedPaymentIntent, PaymentIntentRequest,
 };
+use dual_rail_rails::khqr::{
+    KhqrIssuer, KhqrStatus, KhqrTransfer, KhqrVerifier, MerchantAccount, VerifierError,
+};
 use dual_rail_rails::stripe_webhook::signature_header;
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use tower::ServiceExt;
 
 pub const WEBHOOK_SECRET: &str = "whsec_test";
+pub const KHQR_ACCOUNT: &str = "dual_rail@devb";
 
 #[derive(Default)]
 pub struct FakeCards {
     pub requests: Mutex<Vec<PaymentIntentRequest>>,
     pub fail: bool,
+    pub reject: bool,
 }
 
 #[async_trait]
@@ -35,6 +42,11 @@ impl CardGateway for FakeCards {
         if self.fail {
             return Err(CardGatewayError::Provider("stripe is down".to_owned()));
         }
+        if self.reject {
+            return Err(CardGatewayError::Rejected(
+                "Amount must be no more than ៛999,999.99".to_owned(),
+            ));
+        }
         Ok(CreatedPaymentIntent {
             id: format!("pi_{}", payment_id.simple()),
             client_secret: format!("pi_{}_secret_test", payment_id.simple()),
@@ -42,9 +54,37 @@ impl CardGateway for FakeCards {
     }
 }
 
+#[derive(Default)]
+pub struct FakeBakong {
+    pub paid: Mutex<HashMap<String, KhqrTransfer>>,
+    pub down: AtomicBool,
+    pub calls: AtomicUsize,
+}
+
+#[async_trait]
+impl KhqrVerifier for FakeBakong {
+    async fn check(&self, md5s: &[String]) -> Result<Vec<KhqrStatus>, VerifierError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.down.load(Ordering::SeqCst) {
+            return Err(VerifierError("bakong returned http 403".to_owned()));
+        }
+        let paid = self.paid.lock().unwrap();
+        Ok(md5s
+            .iter()
+            .map(|md5| {
+                paid.get(md5)
+                    .cloned()
+                    .map_or(KhqrStatus::Unpaid, KhqrStatus::Paid)
+            })
+            .collect())
+    }
+}
+
 pub struct TestApp {
     pub router: Router,
+    pub state: AppState,
     pub cards: Arc<FakeCards>,
+    pub bakong: Arc<FakeBakong>,
     pub pool: PgPool,
 }
 
@@ -55,16 +95,83 @@ impl TestApp {
 
     pub fn with_cards(pool: PgPool, cards: FakeCards) -> Self {
         let cards = Arc::new(cards);
-        let router = dual_rail_api::app(AppState {
+        let bakong = Arc::new(FakeBakong::default());
+        let state = AppState {
             pool: pool.clone(),
             cards: cards.clone(),
             stripe_webhook_secret: WEBHOOK_SECRET.into(),
-        });
+            khqr: Arc::new(KhqrIssuer::new(MerchantAccount {
+                account_id: KHQR_ACCOUNT.to_owned(),
+                merchant_name: "Dual Rail".to_owned(),
+                merchant_city: "Phnom Penh".to_owned(),
+                merchant_id: None,
+                acquiring_bank: None,
+            })),
+            verifier: bakong.clone(),
+            khqr_ttl: Duration::from_secs(300),
+        };
         Self {
-            router,
+            router: dual_rail_api::app(state.clone()),
+            state,
             cards,
+            bakong,
             pool,
         }
+    }
+
+    pub async fn create_khqr_payment(
+        &self,
+        key: &str,
+        amount_minor: i64,
+        currency: &str,
+    ) -> (StatusCode, Value) {
+        self.send(create_payment_request(
+            Some(key),
+            json!({ "method": "khqr", "amount_minor": amount_minor, "currency": currency }),
+        ))
+        .await
+    }
+
+    pub fn pay(&self, md5: &str, transfer: KhqrTransfer) {
+        self.bakong
+            .paid
+            .lock()
+            .unwrap()
+            .insert(md5.to_owned(), transfer);
+    }
+
+    pub async fn poll(&self) -> usize {
+        dual_rail_api::poll_once(&self.state).await.unwrap()
+    }
+
+    pub async fn make_due(&self, payment_id: &str) {
+        sqlx::query("update payments set next_check_at = now() where id = $1::uuid")
+            .bind(payment_id)
+            .execute(&self.pool)
+            .await
+            .unwrap();
+    }
+
+    pub async fn expire(&self, payment_id: &str, ago: &str) {
+        sqlx::query(
+            "update payments set expires_at = now() - $2::interval, next_check_at = now()
+             where id = $1::uuid",
+        )
+        .bind(payment_id)
+        .bind(ago)
+        .execute(&self.pool)
+        .await
+        .unwrap();
+    }
+
+    pub async fn review_flags_for(&self, payment_id: &str) -> Vec<String> {
+        sqlx::query_scalar(
+            "select reason from review_flags where payment_id = $1::uuid order by reason",
+        )
+        .bind(payment_id)
+        .fetch_all(&self.pool)
+        .await
+        .unwrap()
     }
 
     pub async fn send(&self, request: Request<Body>) -> (StatusCode, Value) {
@@ -148,6 +255,10 @@ pub fn payment_intent_event(
             "metadata": { "payment_id": payment_id }
         }}
     })
+}
+
+pub fn unix_now_ms() -> i64 {
+    unix_now() * 1000
 }
 
 pub fn unix_now() -> i64 {

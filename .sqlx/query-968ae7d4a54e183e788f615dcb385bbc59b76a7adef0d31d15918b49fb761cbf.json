@@ -1,0 +1,87 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "update payments\n           set next_check_at = now() + $2 * interval '1 second'\n           where id in (\n               select id from payments\n               where provider = 'bakong' and status = 'pending' and next_check_at <= now()\n               order by next_check_at\n               limit $1\n               for update skip locked\n           )\n           returning id,\n                     provider_ref as \"md5!\",\n                     expires_at as \"expires_at!\",\n                     check_attempts,\n                     now() >= expires_at as \"past_expiry!\",\n                     now() >= expires_at + $3 * interval '1 second' as \"past_final_check!\",\n                     now() >= expires_at + interval '24 hours' as \"past_verification_deadline!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "payments",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "md5!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "payments",
+            "name": "provider_ref"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "expires_at!",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "payments",
+            "name": "expires_at"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "check_attempts",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "payments",
+            "name": "check_attempts"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "past_expiry!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "past_final_check!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "past_verification_deadline!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Float8",
+        "Float8"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      false,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "968ae7d4a54e183e788f615dcb385bbc59b76a7adef0d31d15918b49fb761cbf"
+}

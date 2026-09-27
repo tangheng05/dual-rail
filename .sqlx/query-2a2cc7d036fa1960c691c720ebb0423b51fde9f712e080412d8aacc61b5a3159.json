@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "insert into review_flags (payment_id, reason, details) values ($1, $2, $3)\n         on conflict (payment_id, reason) do nothing",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2a2cc7d036fa1960c691c720ebb0423b51fde9f712e080412d8aacc61b5a3159"
+}

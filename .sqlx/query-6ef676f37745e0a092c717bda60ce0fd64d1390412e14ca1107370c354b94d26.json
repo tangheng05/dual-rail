@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "insert into payments (id, method, provider, status, amount_minor, currency,\n                               idempotency_key, provider_ref, khqr_payload, expires_at, next_check_at)\n         values ($1, 'khqr', 'bakong', 'pending', $2, $3, $4, $5, $6, $7, now())\n         on conflict (idempotency_key) do nothing",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int8",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6ef676f37745e0a092c717bda60ce0fd64d1390412e14ca1107370c354b94d26"
+}

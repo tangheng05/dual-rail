@@ -13,8 +13,8 @@ async fn seeds_ledger_accounts(pool: PgPool) {
 #[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
 async fn ledger_rows_are_append_only(pool: PgPool) {
     sqlx::raw_sql(
-        "insert into payments (id, method, status, amount_minor, currency, idempotency_key)
-         values ('00000000-0000-0000-0000-000000000001', 'card', 'succeeded', 1000, 'USD', 'k1');
+        "insert into payments (id, method, provider, status, amount_minor, currency, idempotency_key)
+         values ('00000000-0000-0000-0000-000000000001', 'card', 'stripe', 'succeeded', 1000, 'USD', 'k1');
          insert into journal_entries (id, payment_id)
          values ('00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001');
          insert into ledger_lines (journal_entry_id, account_id, direction, amount_minor, currency)

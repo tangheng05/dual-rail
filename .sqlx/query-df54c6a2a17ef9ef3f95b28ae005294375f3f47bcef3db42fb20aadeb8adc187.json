@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "insert into payments (method, status, amount_minor, currency, idempotency_key)\n         values ($1, 'pending', $2, $3, $4)\n         on conflict (idempotency_key) do nothing\n         returning id",
+  "query": "insert into payments (method, provider, status, amount_minor, currency, idempotency_key)\n         values ($1, $2, 'pending', $3, $4, $5)\n         on conflict (idempotency_key) do nothing\n         returning id",
   "describe": {
     "columns": [
       {
@@ -18,6 +18,7 @@
     "parameters": {
       "Left": [
         "Text",
+        "Text",
         "Int8",
         "Text",
         "Text"
@@ -27,5 +28,5 @@
       false
     ]
   },
-  "hash": "ab2474f4a9fcb5e7fc4d8b953df28ba52196374436464c6d0bb000951c948404"
+  "hash": "df54c6a2a17ef9ef3f95b28ae005294375f3f47bcef3db42fb20aadeb8adc187"
 }

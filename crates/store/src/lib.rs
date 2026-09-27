@@ -1,6 +1,7 @@
 pub mod events;
 pub mod ledger;
 pub mod payments;
+pub mod reviews;
 
 use std::time::Duration;
 

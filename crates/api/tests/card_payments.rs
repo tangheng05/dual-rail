@@ -69,11 +69,6 @@ async fn rejects_invalid_requests(pool: PgPool) {
             json!({ "method": "cash", "amount_minor": 1000, "currency": "USD" }),
             StatusCode::UNPROCESSABLE_ENTITY,
         ),
-        (
-            Some("k"),
-            json!({ "method": "khqr", "amount_minor": 1000, "currency": "USD" }),
-            StatusCode::UNPROCESSABLE_ENTITY,
-        ),
     ];
     for (key, body, expected) in cases {
         let (status, _) = app.send(create_payment_request(key, body.clone())).await;
@@ -129,4 +124,53 @@ async fn unknown_payment_is_not_found(pool: PgPool) {
         .await;
 
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
+async fn usd_amounts_outside_stripe_limits_are_rejected_before_calling_stripe(pool: PgPool) {
+    let app = TestApp::new(pool);
+
+    let (too_small, _) = app.create_card_payment("order-1", 49).await;
+    let (too_large, _) = app.create_card_payment("order-2", 100_000_000).await;
+
+    assert_eq!(too_small, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(too_large, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(app.cards.requests.lock().unwrap().is_empty());
+}
+
+#[sqlx::test(migrator = "dual_rail_store::MIGRATOR")]
+async fn stripe_rejection_fails_the_payment_instead_of_leaving_it_pending(pool: PgPool) {
+    let app = TestApp::with_cards(
+        pool.clone(),
+        FakeCards {
+            reject: true,
+            ..FakeCards::default()
+        },
+    );
+
+    let (first, body) = app
+        .send(create_payment_request(
+            Some("order-1"),
+            json!({ "method": "card", "amount_minor": 100_000_000, "currency": "KHR" }),
+        ))
+        .await;
+    let (second, _) = app
+        .send(create_payment_request(
+            Some("order-2"),
+            json!({ "method": "card", "amount_minor": 100_000_000, "currency": "KHR" }),
+        ))
+        .await;
+
+    assert_eq!(first, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        second,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "two rejected rows must not collide"
+    );
+    assert!(body["error"].as_str().unwrap().contains("999,999.99"));
+    let statuses: Vec<String> = sqlx::query_scalar("select status from payments")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(statuses, ["failed", "failed"]);
 }

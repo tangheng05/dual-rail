@@ -13,6 +13,28 @@ string_codes!(PaymentMethod, "payment method", {
     PaymentMethod::Khqr => "khqr",
 });
 
+/// Who moves the money. Kept separate from the method because one provider can
+/// serve several methods (ABA PayWay takes both cards and KHQR).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Provider {
+    Stripe,
+    Bakong,
+}
+
+string_codes!(Provider, "provider", {
+    Provider::Stripe => "stripe",
+    Provider::Bakong => "bakong",
+});
+
+impl Provider {
+    pub fn for_method(method: PaymentMethod) -> Self {
+        match method {
+            PaymentMethod::Card => Self::Stripe,
+            PaymentMethod::Khqr => Self::Bakong,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PaymentStatus {
     Pending,
@@ -91,6 +113,9 @@ mod tests {
         }
         for method in [PaymentMethod::Card, PaymentMethod::Khqr] {
             assert_eq!(method.as_str().parse(), Ok(method));
+        }
+        for provider in [Provider::Stripe, Provider::Bakong] {
+            assert_eq!(provider.as_str().parse(), Ok(provider));
         }
         assert!("paid".parse::<PaymentStatus>().is_err());
     }

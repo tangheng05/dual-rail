@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use dual_rail_core::{Currency, Money};
-use stripe::{Client, ClientBuilder, IdempotencyKey, RequestStrategy, StripeRequest};
+use stripe::{Client, ClientBuilder, IdempotencyKey, RequestStrategy, StripeError, StripeRequest};
 use stripe_core::payment_intent::CreatePaymentIntent;
 use thiserror::Error;
 use uuid::Uuid;
@@ -25,6 +25,9 @@ pub struct CreatedPaymentIntent {
 pub enum CardGatewayError {
     #[error("stripe request failed: {0}")]
     Provider(String),
+    /// Stripe refused the request itself, so retrying cannot help.
+    #[error("stripe rejected the payment: {0}")]
+    Rejected(String),
     #[error("stripe returned a payment intent without a client secret")]
     MissingClientSecret,
 }
@@ -80,7 +83,7 @@ impl CardGateway for StripeGateway {
             .request_strategy(RequestStrategy::Idempotent(idempotency_key))
             .send(&self.client)
             .await
-            .map_err(|err| CardGatewayError::Provider(err.to_string()))?;
+            .map_err(classify)?;
 
         Ok(CreatedPaymentIntent {
             id: intent.id.to_string(),
@@ -88,6 +91,15 @@ impl CardGateway for StripeGateway {
                 .client_secret
                 .ok_or(CardGatewayError::MissingClientSecret)?,
         })
+    }
+}
+
+fn classify(err: StripeError) -> CardGatewayError {
+    match err {
+        StripeError::Stripe(errors, status) if (400..500).contains(&status) && status != 429 => {
+            CardGatewayError::Rejected(errors.message.unwrap_or_else(|| format!("http {status}")))
+        }
+        other => CardGatewayError::Provider(other.to_string()),
     }
 }
 

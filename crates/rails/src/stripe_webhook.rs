@@ -39,7 +39,7 @@ pub fn verify_signature(
     if signatures.is_empty() {
         return Err(SignatureError::Malformed);
     }
-    if (now_unix - timestamp).abs() > TOLERANCE_SECS {
+    if now_unix.abs_diff(timestamp) > TOLERANCE_SECS.unsigned_abs() {
         return Err(SignatureError::Expired);
     }
 
@@ -170,6 +170,15 @@ mod tests {
         let header = signature_header(PAYLOAD, SECRET, NOW);
         assert_eq!(
             verify_signature(PAYLOAD, &header, SECRET, NOW + TOLERANCE_SECS + 1),
+            Err(SignatureError::Expired)
+        );
+    }
+
+    #[test]
+    fn rejects_extreme_timestamps_without_overflowing() {
+        let header = format!("t={},v1=00", i64::MIN);
+        assert_eq!(
+            verify_signature(PAYLOAD, &header, SECRET, NOW),
             Err(SignatureError::Expired)
         );
     }

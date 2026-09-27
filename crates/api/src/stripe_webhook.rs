@@ -3,15 +3,16 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
-use dual_rail_core::{JournalEntry, Outcome, PaymentMethod, PaymentStatus};
+use dual_rail_core::{Outcome, Provider};
 use dual_rail_rails::stripe_webhook::{self, EventKind, PaymentIntent};
-use dual_rail_store::events::{self, EventSource};
-use dual_rail_store::{ledger, payments};
+use dual_rail_store::reviews::{self, ReviewReason};
+use dual_rail_store::{events, payments};
+use serde_json::json;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::AppState;
 use crate::error::ApiError;
+use crate::{AppState, settlement};
 
 pub async fn receive(
     State(state): State<AppState>,
@@ -57,7 +58,7 @@ async fn settle(
     outcome: Outcome,
 ) -> Result<(), sqlx::Error> {
     let mut tx = pool.begin().await?;
-    if !events::record(&mut tx, EventSource::Stripe, event_id).await? {
+    if !events::record(&mut tx, Provider::Stripe, event_id).await? {
         tracing::info!(%event_id, "duplicate stripe event");
         return Ok(());
     }
@@ -71,50 +72,38 @@ async fn settle(
         None => None,
     };
     let Some(payment) = payment.filter(|payment| {
-        payment.method == PaymentMethod::Card
+        payment.provider == Provider::Stripe
             && payment
                 .provider_ref
                 .as_deref()
                 .is_none_or(|provider_ref| provider_ref == intent.id)
     }) else {
-        tracing::warn!(%event_id, payment_intent = %intent.id, "stripe event does not match a card payment");
+        tracing::warn!(%event_id, payment_intent = %intent.id, "stripe event does not match a stripe payment");
         return tx.commit().await;
     };
 
-    let next = match payment.status.transition(outcome) {
-        Ok(next) => next,
-        Err(err) => {
-            tracing::info!(%event_id, payment_id = %payment.id, %err, "late stripe event ignored");
-            return tx.commit().await;
-        }
-    };
-
-    if next == PaymentStatus::Succeeded
-        && (intent.amount_received != payment.amount.amount_minor()
-            || !intent
-                .currency
-                .eq_ignore_ascii_case(payment.amount.currency().as_str()))
+    if outcome == Outcome::Succeeded
+        && payment.status.transition(outcome).is_ok()
+        && !settlement::amount_matches(&payment, intent.amount_received, &intent.currency)
     {
-        tracing::error!(
-            %event_id,
-            payment_id = %payment.id,
-            expected = payment.amount.amount_minor(),
-            received = intent.amount_received,
-            currency = %intent.currency,
-            "stripe amount does not match payment, left pending for reconciliation"
-        );
+        tracing::error!(%event_id, payment_id = %payment.id, "stripe amount does not match payment, flagged for review");
+        reviews::flag(
+            &mut tx,
+            payment.id,
+            ReviewReason::AmountMismatch,
+            json!({
+                "event_id": event_id,
+                "payment_intent": intent.id,
+                "amount_received": intent.amount_received,
+                "currency": intent.currency,
+            }),
+        )
+        .await?;
         return tx.commit().await;
     }
 
-    if payments::transition(&mut tx, payment.id, next, &intent.id).await?
-        && next == PaymentStatus::Succeeded
-    {
-        let entry = JournalEntry::for_successful_payment(payment.method, payment.amount);
-        ledger::insert_entry(&mut tx, payment.id, &entry).await?;
-    }
-    tx.commit().await?;
-    tracing::info!(%event_id, payment_id = %payment.id, status = %next, "card payment settled");
-    Ok(())
+    settlement::apply(&mut tx, &payment, outcome, Some(&intent.id)).await?;
+    tx.commit().await
 }
 
 fn unix_now() -> i64 {
