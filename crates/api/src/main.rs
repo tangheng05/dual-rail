@@ -1,3 +1,4 @@
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use clap::Parser;
@@ -56,7 +57,8 @@ async fn serve() -> anyhow::Result<()> {
 
     let listener = TcpListener::bind(config.bind_addr).await?;
     tracing::info!(addr = %config.bind_addr, "listening");
-    axum::serve(listener, dual_rail_api::app(state))
+    let app = dual_rail_api::app(state).into_make_service_with_connect_info::<SocketAddr>();
+    axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
 
@@ -101,6 +103,7 @@ async fn build_state() -> anyhow::Result<(Config, AppState)> {
         khqr: Arc::new(khqr),
         verifier: Arc::new(BakongVerifier::new(bakong)),
         khqr_ttl: config.khqr_ttl,
+        http: config.http,
     };
     Ok((config, state))
 }

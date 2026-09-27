@@ -74,7 +74,13 @@ pub async fn create(
     payload: Result<Json<CreatePayment>, JsonRejection>,
 ) -> Result<Response, ApiError> {
     let idempotency_key = idempotency_key(&headers)?;
-    let Json(body) = payload.map_err(|rejection| ApiError::Unprocessable(rejection.body_text()))?;
+    let Json(body) = payload.map_err(|rejection| {
+        if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE {
+            ApiError::PayloadTooLarge
+        } else {
+            ApiError::Unprocessable(rejection.body_text())
+        }
+    })?;
     let method: PaymentMethod = body.method.parse()?;
     let amount = Money::new(body.amount_minor, body.currency.parse()?)?;
     let description = body.description.as_deref();

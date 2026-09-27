@@ -4,6 +4,8 @@ use std::time::Duration;
 
 use anyhow::{Context, bail};
 use dual_rail_rails::khqr::MerchantAccount;
+
+use crate::http::{HttpSettings, RateLimit};
 use time::UtcOffset;
 use time::macros::{format_description, offset};
 
@@ -23,6 +25,7 @@ pub struct Config {
     pub bakong_renewal_email: Option<String>,
     pub bakong_poll_interval: Duration,
     pub reconciliation_offset: UtcOffset,
+    pub http: HttpSettings,
 }
 
 pub enum BakongEndpoint {
@@ -56,6 +59,34 @@ impl Config {
             )
             .context("RECONCILIATION_UTC_OFFSET must look like +07:00")?,
             None => CAMBODIA,
+        };
+        let request_timeout_secs: u64 = optional("REQUEST_TIMEOUT_SECS")
+            .map_or(Ok(30), |secs| secs.parse())
+            .context("REQUEST_TIMEOUT_SECS must be a whole number of seconds")?;
+        if !(25..=300).contains(&request_timeout_secs) {
+            bail!("REQUEST_TIMEOUT_SECS must be between 25 and 300, above the Stripe client's 20s");
+        }
+        let rate_limit_per_second: u32 = optional("RATE_LIMIT_PER_SECOND")
+            .map_or(Ok(10), |rate| rate.parse())
+            .context("RATE_LIMIT_PER_SECOND must be a whole number, 0 to turn it off")?;
+        let rate_limit_burst: u32 = optional("RATE_LIMIT_BURST")
+            .map_or(Ok(20), |burst| burst.parse())
+            .context("RATE_LIMIT_BURST must be a whole number")?;
+        if rate_limit_per_second > 1000 || (rate_limit_per_second > 0 && rate_limit_burst == 0) {
+            bail!("RATE_LIMIT_PER_SECOND must be at most 1000, and RATE_LIMIT_BURST at least 1");
+        }
+        let trust_proxy_headers = match optional("TRUST_PROXY_HEADERS").as_deref() {
+            None | Some("false") => false,
+            Some("true") => true,
+            Some(_) => bail!("TRUST_PROXY_HEADERS must be true or false"),
+        };
+        let http = HttpSettings {
+            request_timeout: Duration::from_secs(request_timeout_secs),
+            rate_limit: (rate_limit_per_second > 0).then_some(RateLimit {
+                per_second: rate_limit_per_second,
+                burst: rate_limit_burst,
+                trust_proxy_headers,
+            }),
         };
         let stripe_secret_key = required("STRIPE_SECRET_KEY")?;
         let stripe_livemode = stripe_livemode(&stripe_secret_key)?;
@@ -94,6 +125,7 @@ impl Config {
             bakong_renewal_email: optional("BAKONG_RENEWAL_EMAIL"),
             bakong_poll_interval: Duration::from_secs(poll_interval_secs),
             reconciliation_offset,
+            http,
         })
     }
 }

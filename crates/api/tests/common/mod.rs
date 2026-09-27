@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{HeaderMap, Request, StatusCode};
-use dual_rail_api::AppState;
+use dual_rail_api::{AppState, HttpSettings};
 use dual_rail_rails::card::{
     CardGateway, CardGatewayError, CreatedPaymentIntent, IntentSnapshot, PaymentIntentRequest,
 };
@@ -32,6 +32,8 @@ pub struct FakeCards {
     pub reject: bool,
     pub in_progress: AtomicBool,
     pub intents: Mutex<HashMap<String, IntentSnapshot>>,
+    /// Makes Stripe slow, to push a request past the HTTP timeout.
+    pub delay: Mutex<Option<Duration>>,
 }
 
 impl FakeCards {
@@ -55,6 +57,10 @@ impl CardGateway for FakeCards {
     ) -> Result<CreatedPaymentIntent, CardGatewayError> {
         let payment_id = request.payment_id;
         self.requests.lock().unwrap().push(request);
+        let delay = *self.delay.lock().unwrap();
+        if let Some(delay) = delay {
+            tokio::time::sleep(delay).await;
+        }
         if self.in_progress.load(Ordering::SeqCst) {
             return Err(CardGatewayError::InProgress);
         }
@@ -161,6 +167,10 @@ impl TestApp {
     }
 
     pub fn with_cards(pool: PgPool, cards: FakeCards) -> Self {
+        Self::configured(pool, cards, HttpSettings::default())
+    }
+
+    pub fn configured(pool: PgPool, cards: FakeCards, http: HttpSettings) -> Self {
         let cards = Arc::new(cards);
         let bakong = Arc::new(FakeBakong::default());
         let state = AppState {
@@ -178,6 +188,7 @@ impl TestApp {
             })),
             verifier: bakong.clone(),
             khqr_ttl: Duration::from_secs(300),
+            http,
         };
         Self {
             router: dual_rail_api::app(state.clone()),

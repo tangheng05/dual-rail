@@ -11,6 +11,7 @@ pub enum ApiError {
     NotFound,
     Conflict(String),
     BadGateway,
+    PayloadTooLarge,
     Internal,
 }
 
@@ -40,6 +41,10 @@ impl IntoResponse for ApiError {
             Self::Unprocessable(message) => (StatusCode::UNPROCESSABLE_ENTITY, message),
             Self::NotFound => (StatusCode::NOT_FOUND, "payment not found".to_owned()),
             Self::Conflict(message) => (StatusCode::CONFLICT, message),
+            Self::PayloadTooLarge => (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "request body is too large".to_owned(),
+            ),
             Self::BadGateway => (
                 StatusCode::BAD_GATEWAY,
                 "payment provider is unavailable, try again".to_owned(),

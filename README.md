@@ -56,6 +56,7 @@ The reasoning behind each of these is in [docs/decisions.md](docs/decisions.md).
 | **Forged or replayed webhooks** | The HMAC-SHA256 is checked over the raw body before parsing, with a 300s tolerance. Every `v1` signature is tried, so rotating the webhook secret doesn't drop events. An event from the other Stripe mode (test vs live) is acknowledged but never settles anything. |
 | **Crash between steps** | The status change, the ledger entry and the event record commit together or not at all. A card payment's row exists before its Stripe intent, and Stripe's idempotency key is derived from our payment id, so a retry can never create a second charge. |
 | **Client retries** | `Idempotency-Key`: the same key and body replay the original payment (and finish a Stripe link a crash interrupted); a different body gets `409`. Concurrent identical requests create one row. |
+| **Abusive or broken clients** | Public routes are rate limited per client IP (429 with `Retry-After`); Stripe webhooks and `/health` are exempt. Bodies over 64 KiB get 413, requests over the timeout get 503, and a panic becomes a 500 instead of a dropped connection. Every response carries an `x-request-id` that also tags that request's log lines. |
 | **Late KHQR payment** | A payment is expired only after Bakong confirms "not paid" *after* the expiry plus a 2-minute grace, so a last-second payment still being indexed isn't lost. A transfer made after expiry is never auto-credited: it's flagged for review. |
 | **Bakong outage / geo restriction** | Bakong's production API only answers Cambodian IPs. Verification goes through a trait (direct, or a relay via `BAKONG_BASE_URL`). Production Bakong refuses the md5 *batch* endpoint with a 403, so the verifier falls back to single lookups. An outage never expires a payment; after 24h of failures it's flagged `unverifiable`. |
 | **Wrong amount** | A provider amount, currency or receiving account that doesn't match ours is never credited; it goes to `review_flags`. KHQR amounts go into the QR through `khqr-core`'s exact integer API (`amount_minor`), never through a float. |
@@ -101,6 +102,10 @@ KHQR needs a Bakong Open API token (`BAKONG_TOKEN`, sandbox by default) and a se
 | `BAKONG_RENEWAL_EMAIL` | | | Lets the client renew an expired token |
 | `BAKONG_POLL_INTERVAL_SECS` | | `2` | At most one batched Bakong call per interval |
 | `RECONCILIATION_UTC_OFFSET` | | `+07:00` | Business-day time zone for reconciliation |
+| `REQUEST_TIMEOUT_SECS` | | `30` | Requests running longer get 503; retry with the same `Idempotency-Key` |
+| `RATE_LIMIT_PER_SECOND` | | `10` | Per client IP, on the public routes; `0` turns it off |
+| `RATE_LIMIT_BURST` | | `20` | Requests a client may make at once before the rate applies |
+| `TRUST_PROXY_HEADERS` | | `false` | Take the client IP from `X-Forwarded-For`; only behind a proxy that sets it |
 
 ## API
 
