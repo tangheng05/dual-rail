@@ -44,6 +44,8 @@ Only `pending` can change, and terminal states are final. Every status change an
 
 ## Failure modes handled
 
+The reasoning behind each of these is in [docs/decisions.md](docs/decisions.md).
+
 | Failure | What happens |
 |---|---|
 | **Duplicate webhooks** | Each Stripe event id is recorded in `processed_events` inside the settling transaction. Replays, even concurrent ones, credit exactly once. |
