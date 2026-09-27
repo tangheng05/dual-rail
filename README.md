@@ -137,3 +137,7 @@ Integration tests run against a real Postgres (`sqlx::test` creates a database p
 - **KHQR paid twice:** a dynamic KHQR can be paid more than once, and Bakong's md5 lookup doesn't expose the second transfer. Catching it needs the merchant's bank statement, so each reconciliation run records `double_payment_check: "not_available"`.
 - **Bakong rate limits:** the free Open API's limits aren't clearly documented. Confirm them with NBC before relying on polling in production.
 - **Not in v1:** refunds, partial captures, FX, merchant dashboard, multi-tenancy, authentication on the API, and routing across processors.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
