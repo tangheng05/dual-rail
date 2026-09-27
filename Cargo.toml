@@ -20,6 +20,7 @@ async-stripe-shared = "=1.0.0-rc.9"
 async-stripe-types = "=1.0.0-rc.9"
 async-trait = "0.1.92"
 axum = "0.8.9"
+clap = { version = "4.6.7", features = ["derive"] }
 dotenvy = "0.15.7"
 hex = "0.4.3"
 hmac = "0.13.0"

@@ -12,6 +12,7 @@ dual-rail-rails.workspace = true
 dual-rail-store.workspace = true
 anyhow.workspace = true
 axum.workspace = true
+clap.workspace = true
 dotenvy.workspace = true
 hex.workspace = true
 khqr-api.workspace = true

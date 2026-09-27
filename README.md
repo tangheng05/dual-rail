@@ -131,6 +131,18 @@ It runs automatically each day after 01:00 local time for the previous day, and 
 docker compose run --rm app dual-rail-api reconcile 2026-09-26
 ```
 
+## Review queue
+
+Anything that needs a human decision lands in `review_flags`: a provider amount that doesn't match, a KHQR paid after it expired, a payment that couldn't be verified, or a transfer reported twice. Nothing in this queue has been credited. The run summary reports how many are still open (`open_review_flags`).
+
+```sh
+dual-rail-api flags list                     # open flags, oldest first, as JSON
+dual-rail-api flags list --all               # including resolved ones
+dual-rail-api flags resolve <id> --note "refunded the customer by hand"
+```
+
+These commands need only `DATABASE_URL`. A resolution is recorded once with its note and can't be changed later, so the queue stays an honest record of what was decided.
+
 ## Development
 
 ```sh

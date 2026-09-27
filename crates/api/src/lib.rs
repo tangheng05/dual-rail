@@ -1,3 +1,4 @@
+pub mod cli;
 mod config;
 mod demo;
 mod error;

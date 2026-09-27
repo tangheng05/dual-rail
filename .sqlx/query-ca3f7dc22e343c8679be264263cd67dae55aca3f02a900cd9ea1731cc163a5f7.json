@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "update review_flags set resolved_at = now(), resolution = $2\n         where id = $1 and resolved_at is null",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ca3f7dc22e343c8679be264263cd67dae55aca3f02a900cd9ea1731cc163a5f7"
+}

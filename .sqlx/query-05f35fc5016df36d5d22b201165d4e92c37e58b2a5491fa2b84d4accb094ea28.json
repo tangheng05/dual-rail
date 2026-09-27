@@ -1,0 +1,100 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select id, payment_id, reason, details, created_at, resolved_at, resolution\n         from review_flags\n         where $1 or resolved_at is null\n         order by created_at",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "review_flags",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "payment_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "review_flags",
+            "name": "payment_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "reason",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "review_flags",
+            "name": "reason"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "details",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "review_flags",
+            "name": "details"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "review_flags",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "resolved_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "review_flags",
+            "name": "resolved_at"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "resolution",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "review_flags",
+            "name": "resolution"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bool"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "05f35fc5016df36d5d22b201165d4e92c37e58b2a5491fa2b84d4accb094ea28"
+}

@@ -92,6 +92,7 @@ pub async fn reconcile(
         "window": { "from": from.to_string(), "to": to.to_string() },
         "checked": checked,
         "counts": counts,
+        "open_review_flags": reviews::count_open(&state.pool).await?,
         "double_payment_check": "not_available",
     });
     runs::finish(
