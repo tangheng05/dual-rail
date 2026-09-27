@@ -1263,9 +1263,9 @@ dependencies = [
 
 [[package]]
 name = "khqr-api"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec9573b43674e0af3c58bdb7940e3793b52ed187056d53d0294dabd4ce571c8a"
+checksum = "2f0634901b884f934661b51409fbeebad5700ac064f4d80d34702684fe9c2d3a"
 dependencies = [
  "reqwest",
  "serde",
@@ -1274,9 +1274,9 @@ dependencies = [
 
 [[package]]
 name = "khqr-core"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f871091b1c2195165175f2da41c55891aa6d4b2b4801aeb000d4a89b8bb171d"
+checksum = "100ec6b87b9650c248d24d040aac39b44b63860942289045c724314f788a5e29"
 dependencies = [
  "image",
  "md-5 0.10.6",
