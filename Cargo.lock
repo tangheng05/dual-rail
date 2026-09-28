@@ -646,7 +646,7 @@ checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 
 [[package]]
 name = "dual-rail-api"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -679,14 +679,14 @@ dependencies = [
 
 [[package]]
 name = "dual-rail-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "dual-rail-rails"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-stripe",
  "async-stripe-core",
@@ -709,7 +709,7 @@ dependencies = [
 
 [[package]]
 name = "dual-rail-store"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dual-rail-core",
  "serde_json",

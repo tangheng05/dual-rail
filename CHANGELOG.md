@@ -4,7 +4,10 @@ All notable changes to this project are recorded here. The project follows
 [semantic versioning](https://semver.org); before 1.0, any release may change
 behavior, and this file says how.
 
-## Unreleased
+## 0.2.0
+
+Ready to run on a public URL: API keys and client tokens, request limits, and
+the demo off by default.
 
 ### Breaking
 
