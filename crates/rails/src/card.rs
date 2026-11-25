@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use dual_rail_core::{Currency, Money};
 use stripe::{Client, ClientBuilder, IdempotencyKey, RequestStrategy, StripeError, StripeRequest};
 use stripe_core::payment_intent::{CreatePaymentIntent, ListPaymentIntent, RetrievePaymentIntent};
-use stripe_shared::{PaymentIntent, PaymentIntentStatus};
+use stripe_shared::{PaymentIntent, PaymentIntentAllowedPaymentMethodTypes, PaymentIntentStatus};
 use stripe_types::{RangeBoundsTs, RangeQueryTs};
 use thiserror::Error;
 use uuid::Uuid;
@@ -104,7 +104,7 @@ impl CardGateway for StripeGateway {
             request.amount.amount_minor(),
             stripe_currency(request.amount.currency()),
         )
-        .payment_method_types(vec!["card".to_owned()])
+        .allowed_payment_method_types(vec![PaymentIntentAllowedPaymentMethodTypes::Card])
         .metadata(HashMap::from([(
             "payment_id".to_owned(),
             request.payment_id.to_string(),
