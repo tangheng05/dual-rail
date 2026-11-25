@@ -91,9 +91,9 @@ dependencies = [
 
 [[package]]
 name = "async-stripe"
-version = "1.0.0-rc.9"
+version = "1.0.0-rc.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "865e5a3e16d6b34d2a1717cd544e33100463b5cf312095b894bd46c435a7b97c"
+checksum = "f39cb2e472b909f60e10d399503515bdb502e4af64d65e67769d5dc1e2a04a68"
 dependencies = [
  "async-stripe-client-core",
  "async-stripe-shared",
@@ -110,9 +110,9 @@ dependencies = [
 
 [[package]]
 name = "async-stripe-client-core"
-version = "1.0.0-rc.9"
+version = "1.0.0-rc.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3441797b3acbea16f073e121f9003534a5307bb108932c43415a8dd2bcc40420"
+checksum = "68b972760651b9f655d42fd98fd67b391161c1efb1511efadb1e8ebb1827ae2f"
 dependencies = [
  "async-stripe-shared",
  "async-stripe-types",
@@ -128,9 +128,9 @@ dependencies = [
 
 [[package]]
 name = "async-stripe-core"
-version = "1.0.0-rc.9"
+version = "1.0.0-rc.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6096d17c61a7fdef95eaa1e143517ca2c412161344bb2147f0ebf3d744ce4a1f"
+checksum = "265cd3600cb877213f94fae544252121f5561c8651e84b7a509728f4feed1102"
 dependencies = [
  "async-stripe-client-core",
  "async-stripe-shared",
@@ -143,9 +143,9 @@ dependencies = [
 
 [[package]]
 name = "async-stripe-shared"
-version = "1.0.0-rc.9"
+version = "1.0.0-rc.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4830148224a1d44fc85847979f657f88d6b2689567dc100c1d1cb54d1514a07b"
+checksum = "0aab3bb24923ab2651e1f92019779fea0d88634b0cddd78404cbffbfa58238ef"
 dependencies = [
  "async-stripe-types",
  "miniserde",
@@ -156,9 +156,9 @@ dependencies = [
 
 [[package]]
 name = "async-stripe-types"
-version = "1.0.0-rc.9"
+version = "1.0.0-rc.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c921209c3bf6c54a5917734ccc732575d11d75848f7c1f64617824f0376b9065"
+checksum = "97f16db6218479d22bdc9eb78834b37cc25f579815d7e953bb1f28f5f673db66"
 dependencies = [
  "miniserde",
  "serde",
@@ -2401,9 +2401,9 @@ dependencies = [
 
 [[package]]
 name = "smol_str"
-version = "0.3.6"
+version = "0.3.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4aaa7368fcf4852a4c2dd92df0cace6a71f2091ca0a23391ce7f3a31833f1523"
+checksum = "eeb7109d23f319619d4cc0de5464613c8b7b1a09db2774a58101459cf6be2f10"
 dependencies = [
  "borsh",
  "serde_core",
