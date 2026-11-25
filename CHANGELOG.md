@@ -4,6 +4,14 @@ All notable changes to this project are recorded here. The project follows
 [semantic versioning](https://semver.org); before 1.0, any release may change
 behavior, and this file says how.
 
+## 0.2.1
+
+### Security
+
+- Updated dependencies for RUSTSEC-2026-0381, 0382 and 0383 (TLS certificate
+  checks could trust distrusted intermediates) and RUSTSEC-2026-0385
+  (non-constant-time comparisons used by HMAC verification).
+
 ## 0.2.0
 
 Ready to run on a public URL: API keys and client tokens, request limits, and
